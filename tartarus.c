@@ -198,17 +198,51 @@ struct razer_report generate_report(unsigned char class, unsigned char id, unsig
 // Log the a razer report struct to the kernel (currently used for debugging)
 // Also taken mostly from OpenRazer
 void log_report(struct razer_report* report) {
-    printk(KERN_INFO "status: 0x%02x transaction_id.id: 0x%02x remaining_packets: 0x%02x protocol_type: 0x%02x data_size: 0x%02x, command_class: 0x%02x, command_id.id: 0x%02x Params: 0x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n",
-           report->status,
+    char* status_str;
+    char* params_str;
+    int i;      // Top-level loop parameter
+
+    // Status
+    switch (report->status) {
+    case 0x00:
+        status_str = "New Command (0x00)";
+        break;
+    case 0x01:
+        status_str = "Device Busy (0x01)";
+        break;
+    case 0x02:
+        status_str = "Success (0x02)";
+        break;
+    case 0x03:
+        status_str = "Failure (0x03)";
+        break;
+    case 0x04:
+        status_str = "Timeout (0x04)";
+        break;
+    case 0x05:
+        status_str = "Not Supported (0x05)";
+        break;
+    default:
+        status_str = "WARNING unexpected status";
+    };
+    
+    // Command params (data)
+    // Length of param string: 80 * 2 chars, + (80 / 2) * 2 spaces + 1 null = 241
+    params_str = (char*) kzalloc(256 * sizeof(char), GFP_KERNEL);
+    for (i = 0; i < 80; i += 2)
+        snprintf(params_str + (3 * i), 7, "%02x%02x%s", report->data[i], report->data[i + 1], ((i + 2) % 8) ? "  " : "\n\t");
+        // snprintf(params_str + (3 * i), 7, "%02x%02x%s", (char) i, (char) (i + 1), ((i + 2) % 8) ? "  " : "\n\t");
+
+    printk(KERN_INFO "TARTARUS DEBUG INFORMATION:\n\n\tTransaction ID: 0x%02x\tStatus: %s\n\tCommand ID: 0x%02x\tClass: 0x%02x\n\tSize: 0x%02x (%d)\t\tRemaining Packets: 0x%02x (%d)\n\n\tParams: 0x\n\t%s\n",
            report->tr_id.id,
-           report->remaining,
-           report->type,
-           report->size,
+           status_str,
+           report->size, report->size,
+           report->remaining, report->remaining,
            report->class,
            report->cmd_id.id,
-           report->data[0], report->data[1], report->data[2], report->data[3], report->data[4], report->data[5],
-           report->data[6], report->data[7], report->data[8], report->data[9], report->data[10], report->data[11],
-           report->data[12], report->data[13], report->data[14], report->data[15]);
+           params_str);
+
+    kfree(params_str);
 }
 
 
@@ -289,6 +323,9 @@ send_command_exit:
 // Called when the device is bound
 // Reference razerkbd_driver.c - Line 3184
 static int tartarus_probe(struct hid_device* dev, const struct hid_device_id* id) {
+    struct razer_report cmd;
+    struct razer_report out;
+
     // TODO Detect device interfaces
     
     // TODO Add interface num
@@ -303,8 +340,8 @@ static int tartarus_probe(struct hid_device* dev, const struct hid_device_id* id
     // cmd.data[1] = 0x0D;     // Green LED (profile indicicator)
     // cmd.data[2] = 0x01;     // ON
 
-    struct razer_report cmd = generate_report(CMD_KBD_LAYOUT);
-    struct razer_report out = send_command(dev, &cmd, NULL);
+    cmd = generate_report(CMD_KBD_LAYOUT);
+    out = send_command(dev, &cmd, NULL);
     log_report(&out);
 
     return 0;
@@ -318,13 +355,13 @@ static void tartarus_disconnect(struct hid_device* dev) {
 
 // Called for every standard device event
 // (Still unsure what is standard vs raw and when either is triggered)
-static int event_handler(struct hid_device* dev, struct hid_field* field, struct hid_usage* usage, int32_t value) {
-    printk(KERN_INFO "Event handler called :)\n");
-    return 0;
-}
+// static int event_handler(struct hid_device* dev, struct hid_field* field, struct hid_usage* usage, int32_t value) {
+//     printk(KERN_INFO "Event handler called :)\n");
+//     return 0;
+// }
 
-// Called for every raw device event
-static int raw_event_handler(struct hid_device* dev, struct hid_report* report, u8* data, int size) {
-    printk(KERN_INFO "Raw event handler called :O\n");
-    return 0;
-}
+// // Called for every raw device event
+// static int raw_event_handler(struct hid_device* dev, struct hid_report* report, u8* data, int size) {
+//     printk(KERN_INFO "Raw event handler called :O\n");
+//     return 0;
+// }
