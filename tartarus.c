@@ -60,7 +60,7 @@ struct razer_key_translation {
 
 /*/
 
-// Driver metadata
+// -- DRIVER METADATA --
 MODULE_AUTHOR("Drayux");
 MODULE_DESCRIPTION("Tartarus V2 Driver");
 MODULE_LICENSE("GPL");
@@ -75,8 +75,9 @@ MODULE_LICENSE("GPL");
 #define WAIT_MIN    600         // Minmum response wait time is 600 microseconds (0.6 ms)
 #define WAIT_MAX    800         // ^^Maximum is 800 us (0.8 ms)
 
-// Define device commands
-#define CMD_KBD_LAYOUT      0x00, 0x86, 0x02
+// Device commands
+#define CMD_KBD_LAYOUT      0x00, 0x86, 0x02        // Query the device for its keyboard layout
+#define CMD_SET_LED         0x03, 0x00, 0x03        // Set a specified LED with a given value
 
 static int tartarus_probe(struct hid_device*, const struct hid_device_id*);
 static void tartarus_disconnect(struct hid_device*);
@@ -197,7 +198,7 @@ struct razer_report generate_report(unsigned char class, unsigned char id, unsig
 // Log the a razer report struct to the kernel (currently used for debugging)
 // Also taken mostly from OpenRazer
 void log_report(struct razer_report* report) {
-    printk(KERN_INFO "status: %02x transaction_id.id: %02x remaining_packets: %02x protocol_type: %02x data_size: %02x, command_class: %02x, command_id.id: %02x Params: %02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x .\n",
+    printk(KERN_INFO "status: 0x%02x transaction_id.id: 0x%02x remaining_packets: 0x%02x protocol_type: 0x%02x data_size: 0x%02x, command_class: 0x%02x, command_id.id: 0x%02x Params: 0x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n",
            report->status,
            report->tr_id.id,
            report->remaining,
@@ -233,9 +234,8 @@ static struct razer_report send_command(struct hid_device* dev, struct razer_rep
     int received = -1;  // Amount of data transferred (result of usb_control_msg)
 
     // Cast our HID device to a USB device (I want to think there's a better option than this?)
-    // Note to self--Still not sure where we specify the interface...maybe this selects just the one we want?
-    struct usb_interface* interface = to_usb_interface(dev->dev.parent);
-    struct usb_device* tartarus = interface_to_usbdev(interface);
+    struct usb_interface* parent = to_usb_interface(dev->dev.parent);
+    struct usb_device* tartarus = interface_to_usbdev(parent);
 
     // Function output
     struct razer_report response = { 0 };
@@ -244,7 +244,7 @@ static struct razer_report send_command(struct hid_device* dev, struct razer_rep
     request = (char*) kzalloc(sizeof(struct razer_report), GFP_KERNEL);
     if (!request) {         // (!(request && response))
         printk(KERN_WARNING "Failed to communcate with device: Out of memory.\n");
-        *cmd_errno = -ENOMEM;
+        if (cmd_errno) *cmd_errno = -ENOMEM;
         return response;
     }
 
@@ -258,23 +258,29 @@ static struct razer_report send_command(struct hid_device* dev, struct razer_rep
     //  0X21 --> USB_TYPE_CLASS | USB_RECIP_INTERFACE | USB_DIR_OUT
     received = usb_control_msg(tartarus, usb_sndctrlpipe(tartarus, 0), 0x09, 0X21, 0x300, REPORT_IDX, request, REPORT_LEN, USB_CTRL_SET_TIMEOUT);
     usleep_range(WAIT_MIN, WAIT_MAX);
-
-    // TODO CHECK FOR ERRORS! (received != <expected size>)
-    if (received != REPORT_LEN) printk(KERN_WARNING "Device data transfer failed.\n");
+    if (received != REPORT_LEN) {
+        printk(KERN_WARNING "Device data transfer failed.\n");
+        if (cmd_errno) *cmd_errno = (received < 0) ? received : -EIO;
+        goto send_command_exit;
+    }
 
     // Step two - Attempt to get the data out
     // We've prepared an empty buffer, and the device will populate it
     //  0x01 --> HID_REQ_GET_REPORT
     //  0XA1 --> USB_TYPE_CLASS | USB_RECIP_INTERFACE | USB_DIR_IN0x00, 0x86, 0x02
     memset(request, 0, sizeof(struct razer_report));
-    received = usb_control_msg(tartarus, usb_sndctrlpipe(tartarus, 0), 0x01, 0XA1, 0x300, REPORT_IDX, request, REPORT_LEN, USB_CTRL_SET_TIMEOUT);
-
-    // TODO CHECK FOR ERRORS AGAIN! (received != <expected size>)
-    if (received != 90) printk(KERN_WARNING "Device data transfer failed.\n");
+    received = usb_control_msg(tartarus, usb_rcvctrlpipe(tartarus, 0), 0x01, 0XA1, 0x300, REPORT_IDX, request, REPORT_LEN, USB_CTRL_SET_TIMEOUT);
+    if (received != REPORT_LEN) {
+        // An error here will likely be a mismatched data len
+        // We will still return, but should warn that the data might be invalid
+        printk(KERN_WARNING "Invalid device data transfer. (%d bytes != %d bytes)\n", received, REPORT_LEN);
+        if (cmd_errno) *cmd_errno = received;
+    }
 
     // We aren't referencing the buffer so we copy it to the stack (rename if response var is used)
     memcpy(&response, request, sizeof(struct razer_report));
 
+send_command_exit:
     // Final cleanup
     kfree(request);
     return response;
@@ -283,16 +289,22 @@ static struct razer_report send_command(struct hid_device* dev, struct razer_rep
 // Called when the device is bound
 // Reference razerkbd_driver.c - Line 3184
 static int tartarus_probe(struct hid_device* dev, const struct hid_device_id* id) {
+    // TODO Detect device interfaces
+    
     // TODO Add interface num
     printk(KERN_INFO "USB Driver Bound:  Vendor ID: 0x%02x  Product ID: 0x%02x\n", id->vendor, id->product);
 
     // struct usb_interface interface = to_usb_interface(dev->dev.parent);
     // set up a device struct and device files if any
 
-    // Some device interfacing tests!
-    int en = 0;
+    // Device interfacing test
+    // struct razer_report cmd = generate_report(CMD_SET_LED);
+    // cmd.data[0] = 0x00;
+    // cmd.data[1] = 0x0D;     // Green LED (profile indicicator)
+    // cmd.data[2] = 0x01;     // ON
+
     struct razer_report cmd = generate_report(CMD_KBD_LAYOUT);
-    struct razer_report out = send_command(dev, &cmd, &en);
+    struct razer_report out = send_command(dev, &cmd, NULL);
     log_report(&out);
 
     return 0;
@@ -302,7 +314,6 @@ static int tartarus_probe(struct hid_device* dev, const struct hid_device_id* id
 static void tartarus_disconnect(struct hid_device* dev) {
     // Debugging output
     printk(KERN_INFO "USB Driver Unbound (Tartarus)\n");
-
 }
 
 // Called for every standard device event
