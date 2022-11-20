@@ -72,7 +72,8 @@ MODULE_LICENSE("GPL");
 
 #define REPORT_LEN  0x5A        // Each USB report has 90 bytes
 #define REPORT_IDX  0x01        // Report/Response (consistent across all devices so I don't think I need two defs)
-#define USAGE_INDEX 256			// Maximum usage index (aka how long our conversion map should be)
+#define USAGE_IDX	256			// Maximum usage index (aka how long our conversion map should be)
+#define DEVICE_IDX	96			// Highest index on the device
 #define WAIT_MIN    600         // Minmum response wait time is 600 microseconds (0.6 ms)
 #define WAIT_MAX    800         // ^^Maximum is 800 us (0.8 ms)
 
@@ -83,9 +84,8 @@ MODULE_LICENSE("GPL");
 static int tartarus_probe(struct hid_device*, const struct hid_device_id*);
 static void tartarus_disconnect(struct hid_device*);
 static int event_handler(struct hid_device*, struct hid_field*, struct hid_usage*, int32_t);
-// static int raw_event_handler(struct hid_device*, struct hid_report*, u8*, int);
-static int tartarus_input_mapping(struct hid_device* dev, struct hid_input* input, struct hid_field* field,
-							 struct hid_usage* usage, unsigned long** bit, int* max) { return 0; }
+// static int tartarus_input_mapping(struct hid_device* dev, struct hid_input* input, struct hid_field* field,
+// 							 struct hid_usage* usage, unsigned long** bit, int* max) { return 0; }
 
 // Array of USB device ID structs
 static struct hid_device_id id_table [] = {
@@ -99,9 +99,8 @@ static struct hid_driver tartarus_driver = {
 	.id_table = id_table,
 	.probe = tartarus_probe,
 	.remove = tartarus_disconnect,
-	.event = event_handler,
-	// .raw_event = raw_event_handler,
-	.input_mapping = tartarus_input_mapping
+	.event = event_handler
+	// .input_mapping = tartarus_input_mapping
 };
 
 module_hid_driver(tartarus_driver);
@@ -111,7 +110,7 @@ module_hid_driver(tartarus_driver);
 // Struct for device private sector
 struct razer_data {
 	int dummy_status;
-	unsigned keymap[USAGE_INDEX];
+	unsigned keymap[DEVICE_IDX];
 };
 
 // Format of the 90 byte device response
@@ -332,8 +331,8 @@ static int tartarus_probe(struct hid_device* dev, const struct hid_device_id* id
 	struct razer_data* device_data = NULL;
 	unsigned* keymap;
 
-	// struct razer_report cmd;
-	// struct razer_report out;
+	struct razer_report cmd;
+	struct razer_report out;
 
 	// Cast our HID device to a USB device
 	// My current understanding of the hierarchy:
@@ -361,7 +360,7 @@ static int tartarus_probe(struct hid_device* dev, const struct hid_device_id* id
 	// Prepare the device keymap
 	// TODO: parse_keymap(<device_data>, <file>, ...)
 	keymap = device_data->keymap;
-	memset(keymap, 0, sizeof(unsigned) * USAGE_INDEX);
+	memset(keymap, 0, sizeof(unsigned) * DEVICE_IDX);
 
 	// Binds (index is 'usage_index', value is desired key scancode)
 	// Decent list of scan codes: https://flint.cs.yale.edu/cs422/doc/art-of-asm/pdf/APNDXC.PDF
@@ -389,22 +388,29 @@ static int tartarus_probe(struct hid_device* dev, const struct hid_device_id* id
 	keymap[0x1b] = 0x2e;		// Key 18 -> C
 	keymap[0x06] = 0x2f;		// Key 19 -> V
 
+	keymap[0x02] = 0xff;		// Thumb Button -> Hypershift (0xff is not a scan code but an override for us)
+								//				   I could consider moving this to it's own field and checking accordingly
+	keymap[0x52] = 0x48;		// Thumb Hat (U) -> Arrow UP
+	keymap[0x4f] = 0x4d;		// Thumb Hat (R) -> Arrow RIGHT
+	keymap[0x51] = 0x50;		// Thumb Hat (D) -> Arrow DOWN
+	keymap[0x50] = 0x4b;		// Thumb Hat (L) -> Arrow LEFT
+
+	keymap[0x2c] = 0x39;		// Key 20 -> SPACE
+
 	// Log to kernel
 	printk(KERN_INFO "HID Driver Bound:  Vendor ID: 0x%02x  Product ID: 0x%02x  Interface Num: 0x%02x\n", id->vendor, id->product, inum);
 	printk(KERN_INFO "HID Device Info:  devnum: %d  devpath: %s\n", device->devnum, device->devpath);	// For debugging
 
-	/*/ Device interfacing test
+	// Send a dummy report once
 	if (inum == 0) {
-		cmd = generate_report(CMD_SET_LED);
-		cmd.data[1] = 0x0D;     // Green LED (profile indicicator)
-		cmd.data[2] = 0x01;     // ON
+		// cmd = generate_report(CMD_SET_LED);
+		// cmd.data[1] = 0x0D;     // Green LED (profile indicicator)
+		// cmd.data[2] = 0x01;     // ON
+
+		cmd = generate_report(CMD_KBD_LAYOUT);
 		out = send_command(dev, &cmd, NULL);
 		log_report(&out);
-	} /*/
-
-	// cmd = generate_report(CMD_KBD_LAYOUT);
-	// out = send_command(dev, &cmd, NULL);
-	// log_report(&out);
+	}
 
 	return 0;
 
@@ -437,38 +443,32 @@ static void tartarus_disconnect(struct hid_device* dev) {
 static int event_handler(struct hid_device* dev, struct hid_field* field, struct hid_usage* usage, int32_t value) {
 	struct input_dev *input;
 	struct razer_data* device_data = hid_get_drvdata(dev);
+	unsigned idx;
 	unsigned code;
 
 	// If we have no device data yet, just perform the default function
 	if (!device_data) return 0;
 
-	// Ensure that we do not attempt to access out of bounds
-	if (field->maxusage > USAGE_INDEX) return -1;
-
 	// If the request is missing data, just pass it through (not sure what to do here--just want memory safety)
 	if (!field || !field->hidinput || !usage->type) return 0;
 	input = field->hidinput->input;
 
-	// Some testing to figure out codes
-	// if (value) printk(KERN_INFO "Event Info:  code: 0x%08x  usage: 0x%08x  type: 0x%08x  index: 0x%08x\n", usage->code, usage->hid, usage->type, usage->usage_index);
-
-	// TODO: Consider instead determing the maximum value on the device and just checking
-	//		 if the specified code is out of that range and passing through if so
-
 	// TODO: There are some "extra" events for every main event, usage_index 0 -> 7 are sent with value 0 every event
-	// 		 If type is not the kind we want, pass through?
+	// Prune non keyboard types (right now mouse functions pass through)
+	//	Keyboard is type 0x01
+	// 	Mouse is type 0x02
+	if (usage->type != 0x01) return 0;
+
+	// Some testing to figure out codes
+	// /*if (value)*/ printk(KERN_INFO "Event Info:  code: 0x%04x  type: 0x%04x  index: 0x%04x  value: 0x%04x\n", usage->code, usage->type, usage->usage_index, value);
 
 	// Lookup our keycode and send the data
-	code = device_data->keymap[usage->usage_index];
-	input_event(input, usage->type, code, value);
+	idx = usage->usage_index;
+	if (idx >= DEVICE_IDX) return 0;	// This should never be called but for the sake of due diligence
+
+	code = device_data->keymap[idx];
+	if (code == 0xff) return 1;			// Hypershift (TODO)
+
+	input_event(input, 0x01, code, value);
     return 1;
 }
-
-// Called for every raw device event
-// static int raw_event_handler(struct hid_device* dev, struct hid_report* report, u8* data, int size) {
-// 	if (!data | !report) return -1;
-// 	struct usb_interface* interface = to_usb_interface(dev->dev.parent);
-
-//     printk(KERN_INFO "Event Info:  inum: 0x%02x  report_id: %d  data: 0x%02x\n", interface->cur_altsetting->desc.bInterfaceNumber, report->id, *data);
-//     return 0;
-// }
