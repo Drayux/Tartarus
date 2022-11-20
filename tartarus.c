@@ -72,6 +72,7 @@ MODULE_LICENSE("GPL");
 
 #define REPORT_LEN  0x5A        // Each USB report has 90 bytes
 #define REPORT_IDX  0x01        // Report/Response (consistent across all devices so I don't think I need two defs)
+#define USAGE_INDEX 256			// Maximum usage index (aka how long our conversion map should be)
 #define WAIT_MIN    600         // Minmum response wait time is 600 microseconds (0.6 ms)
 #define WAIT_MAX    800         // ^^Maximum is 800 us (0.8 ms)
 
@@ -110,6 +111,7 @@ module_hid_driver(tartarus_driver);
 // Struct for device private sector
 struct razer_data {
 	int dummy_status;
+	unsigned keymap[USAGE_INDEX];
 };
 
 // Format of the 90 byte device response
@@ -328,9 +330,10 @@ static struct razer_report send_command(struct hid_device* dev, struct razer_rep
 static int tartarus_probe(struct hid_device* dev, const struct hid_device_id* id) {
 	int status;
 	struct razer_data* device_data = NULL;
+	unsigned* keymap;
 
-	struct razer_report cmd;
-	struct razer_report out;
+	// struct razer_report cmd;
+	// struct razer_report out;
 
 	// Cast our HID device to a USB device
 	// My current understanding of the hierarchy:
@@ -355,7 +358,40 @@ static int tartarus_probe(struct hid_device* dev, const struct hid_device_id* id
 	status = hid_hw_start(dev, HID_CONNECT_DEFAULT);
 	if (status) goto probe_fail;
 
-	// *device_data = status;
+	// Prepare the device keymap
+	// TODO: parse_keymap(<device_data>, <file>, ...)
+	keymap = device_data->keymap;
+	memset(keymap, 0, sizeof(unsigned) * USAGE_INDEX);
+
+	// Binds (index is 'usage_index', value is desired key scancode)
+	// Decent list of scan codes: https://flint.cs.yale.edu/cs422/doc/art-of-asm/pdf/APNDXC.PDF
+	// Hard-coded is my preferred config
+	keymap[0x1e] = 0x02;		// Key 01 -> 1
+	keymap[0x1f] = 0x03;		// Key 02 -> 2
+	keymap[0x20] = 0x04;		// Key 03 -> 3
+	keymap[0x21] = 0x05;		// Key 04 -> 4
+	keymap[0x22] = 0x06;		// Key 05 -> 5
+
+	keymap[0x2b] = 0x01;		// Key 06 -> ESC
+	keymap[0x14] = 0x10;		// Key 07 -> Q
+	keymap[0x1a] = 0x11;		// Key 08 -> W
+	keymap[0x08] = 0x12;		// Key 09 -> E
+	keymap[0x15] = 0x13;		// Key 10 -> R
+
+	keymap[0x39] = 0x2b;		// Key 11 -> BACKSLASH
+	keymap[0x04] = 0x1e;		// Key 12 -> A
+	keymap[0x16] = 0x1f;		// Key 13 -> S
+	keymap[0x07] = 0x20;		// Key 14 -> D
+	keymap[0x09] = 0x21;		// Key 15 -> F
+
+	keymap[0x01] = 0x2c;		// Key 16 -> Z
+	keymap[0x1d] = 0x2d;		// Key 17 -> X
+	keymap[0x1b] = 0x2e;		// Key 18 -> C
+	keymap[0x06] = 0x2f;		// Key 19 -> V
+
+	// Log to kernel
+	printk(KERN_INFO "HID Driver Bound:  Vendor ID: 0x%02x  Product ID: 0x%02x  Interface Num: 0x%02x\n", id->vendor, id->product, inum);
+	printk(KERN_INFO "HID Device Info:  devnum: %d  devpath: %s\n", device->devnum, device->devpath);	// For debugging
 
 	/*/ Device interfacing test
 	if (inum == 0) {
@@ -366,13 +402,9 @@ static int tartarus_probe(struct hid_device* dev, const struct hid_device_id* id
 		log_report(&out);
 	} /*/
 
-	printk(KERN_INFO "HID Driver Bound:  Vendor ID: 0x%02x  Product ID: 0x%02x  Interface Num: 0x%02x\n", id->vendor, id->product, inum);
-	printk(KERN_INFO "HID Device Info:  devnum: %d  devpath: %s\n", device->devnum, device->devpath);	// For debugging
-	// printk(KERN_INFO "HID Device Info:  ll_driver: %p\n", dev->ll_driver);								// For debugging
-
-	cmd = generate_report(CMD_KBD_LAYOUT);
-	out = send_command(dev, &cmd, NULL);
-	log_report(&out);
+	// cmd = generate_report(CMD_KBD_LAYOUT);
+	// out = send_command(dev, &cmd, NULL);
+	// log_report(&out);
 
 	return 0;
 
@@ -397,23 +429,38 @@ static void tartarus_disconnect(struct hid_device* dev) {
 	printk(KERN_INFO "HID Driver Unbound (Tartarus)\n");
 }
 
-// Called for every standard device event
-// (Still unsure what is standard vs raw and when either is triggered)
+// Called in response to every HID event (beginning after hid_hw_start() in probe())
+// Useful links (for my personal reference lmaooo)
+// [EVENT HANDLER]  https://elixir.bootlin.com/linux/latest/source/drivers/hid/hid-core.c#L1507
+// [INPUT PARSER]   https://elixir.bootlin.com/linux/latest/source/drivers/hid/hid-input.c#L1443
+// [INPUT EVENT]  https://elixir.bootlin.com/linux/latest/source/drivers/input/input.c#L423
 static int event_handler(struct hid_device* dev, struct hid_field* field, struct hid_usage* usage, int32_t value) {
 	struct input_dev *input;
-	
-    printk(KERN_INFO "Event Info:  value: %d  hid:%d\n", value, usage->hid);
+	struct razer_data* device_data = hid_get_drvdata(dev);
+	unsigned code;
 
-	// hidinput_hid_event(dev, field, usage, value);
+	// If we have no device data yet, just perform the default function
+	if (!device_data) return 0;
+
+	// Ensure that we do not attempt to access out of bounds
+	if (field->maxusage > USAGE_INDEX) return -1;
+
+	// If the request is missing data, just pass it through (not sure what to do here--just want memory safety)
+	if (!field || !field->hidinput || !usage->type) return 0;
 	input = field->hidinput->input;
 
-	// [EVENT HANDLER]  https://elixir.bootlin.com/linux/latest/source/drivers/hid/hid-core.c#L1507
-	// [INPUT PARSER]   https://elixir.bootlin.com/linux/latest/source/drivers/hid/hid-input.c#L1443
-	
-	// [DOCUMENTATION]  https://elixir.bootlin.com/linux/latest/source/drivers/input/input.c#L423
-	input_event(input, usage->type, usage->code, value);
+	// Some testing to figure out codes
+	// if (value) printk(KERN_INFO "Event Info:  code: 0x%08x  usage: 0x%08x  type: 0x%08x  index: 0x%08x\n", usage->code, usage->hid, usage->type, usage->usage_index);
 
-	// If this is 0, the default handler finishes its execution, calling the input parser
+	// TODO: Consider instead determing the maximum value on the device and just checking
+	//		 if the specified code is out of that range and passing through if so
+
+	// TODO: There are some "extra" events for every main event, usage_index 0 -> 7 are sent with value 0 every event
+	// 		 If type is not the kind we want, pass through?
+
+	// Lookup our keycode and send the data
+	code = device_data->keymap[usage->usage_index];
+	input_event(input, usage->type, code, value);
     return 1;
 }
 
