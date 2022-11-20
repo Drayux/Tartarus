@@ -402,11 +402,11 @@ static int tartarus_probe(struct hid_device* dev, const struct hid_device_id* id
 	memcpy(keymap_hs, keymap, sizeof(unsigned) * DEVICE_IDX);
 
 	// Hypershift binds
-	keymap[0x1e] = 0x07;		// Key 01 -> 6
-	keymap[0x1f] = 0x08;		// Key 02 -> 7
-	keymap[0x20] = 0x09;		// Key 03 -> 8
-	keymap[0x21] = 0x0a;		// Key 04 -> 9
-	keymap[0x22] = 0x0c;		// Key 05 -> ~
+	keymap_hs[0x1e] = 0x07;		// Key 01 -> 6
+	keymap_hs[0x1f] = 0x08;		// Key 02 -> 7
+	keymap_hs[0x20] = 0x09;		// Key 03 -> 8
+	keymap_hs[0x21] = 0x0a;		// Key 04 -> 9
+	keymap_hs[0x22] = 0x0c;		// Key 05 -> ~
 
 	// Attempt to start communication with the device
 	status = hid_parse(dev);		// I think this populates dev->X where X is necessary for hid_hw_start()
@@ -476,25 +476,31 @@ static int event_handler(struct hid_device* dev, struct hid_field* field, struct
 	// Prune non keyboard types (right now mouse functions pass through)
 	//	Keyboard is type 0x01
 	// 	Mouse is type 0x02
-	if (usage->type != 0x01) return 0;
+	// if (usage->type != 0x01) return 0;	// Disabled for debugging
 
 	// Some testing to figure out codes
 	// /*if (value)*/ printk(KERN_INFO "Event Info:  code: 0x%04x  type: 0x%04x  index: 0x%04x  value: 0x%04x\n", usage->code, usage->type, usage->usage_index, value);
 
 	// Lookup our keycode and send the data
 	idx = usage->usage_index;
-	if (idx >= DEVICE_IDX) return 0;	// This should never be called but for the sake of due diligence
+	if (idx >= DEVICE_IDX) return -1;	// This should never be called but for the sake of due diligence
+
+	// TODO Hypershift could drop input releases (press button, press HS, release button, release HS)
 
 	// Grab the pointer we want depending if we have hypershift on or not
-	keymap = (device_data->hypershift) ? device_data->keymap : device_data->keymap_hypershift;
-	code = keymap[idx];
-	if (code == 0x00) return 1;		// 0x00 means no mapped key
-	else if (code == 0xff) {
-		// Hypershift (TODO)
-		device_data->hypershift = value;
-		return 1;
-	}
+	// keymap = (device_data->hypershift) ? device_data->keymap_hypershift : device_data->keymap;
+	// code = keymap[idx];
+	// if (code == 0x00) return 1;		// 0x00 means no mapped key
+	// else if (code == 0xff) {
+	// 	// Hypershift (TODO)
+	// 	device_data->hypershift = value;
+	// 	return 1;
+	// }
 
-	input_event(input, 0x01, code, value);
+	// keymap = device_data->keymap;
+	// code = keymap[idx];
+
+	// input_event(input, 0x01, code, value);
+	input_event(input, usage->type, usage->code, value);
     return 1;
 }
