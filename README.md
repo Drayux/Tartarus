@@ -51,4 +51,5 @@ This can be found within the probe function (`tartarus_probe()`)
 - List installed driver modules with `lsmod`
 - ^^You can search for this driver specifically with `lsmod | grep tartarus` (no output means it is not installed)
 - This driver logs basic data to the kernel log, run `dmesg` to see this (usually requires invocation with `sudo`)
+- Running `uname -r` will return your current Kernel version (this is what the makefile uses to determine which build system to use)
 

@@ -108,9 +108,11 @@ module_hid_driver(tartarus_driver);
 
 // -- DATATYPES --
 // Struct for device private sector
+// TODO DEVICE PROFILES (probably going to reset keymap/keymap_hypershift with a load function?)
 struct razer_data {
-	int dummy_status;
+	int32_t hypershift;
 	unsigned keymap[DEVICE_IDX];
+	unsigned keymap_hypershift[DEVICE_IDX];
 };
 
 // Format of the 90 byte device response
@@ -252,7 +254,7 @@ void log_report(struct razer_report* report) {
 
 // -- DEVICE INTERFACING (main driver goodness) --
 // Calculate report checksum
-// ^^Taken directly from OpenRazer driver
+// (Taken from OpenRazer)
 unsigned char razer_checksum(struct razer_report* report) {
 	unsigned char ck = 0;
 	unsigned char* bytes = (unsigned char*) report;
@@ -266,7 +268,6 @@ unsigned char razer_checksum(struct razer_report* report) {
 // Use req (aka the request report) to specify the command to send
 // cmd_errno can be NULL (but shouldn't be)
 // Core functionality taken from OpenRazer
-// POTENTIAL TODO: Change this to take a usb_device instead of an hid_device
 static struct razer_report send_command(struct hid_device* dev, struct razer_report* req, int* cmd_errno) {
 	char* request;      // razer_report containing the command parameters (i.e. get layout/set lighting pattern/etc)
 	int received = -1;  // Amount of data transferred (result of usb_control_msg)
@@ -325,11 +326,12 @@ static struct razer_report send_command(struct hid_device* dev, struct razer_rep
 }
 
 // Called when the device is bound
-// Reference razerkbd_driver.c - Line 3184
+// TODO: Hypershift mode needs a device file probably?
 static int tartarus_probe(struct hid_device* dev, const struct hid_device_id* id) {
 	int status;
 	struct razer_data* device_data = NULL;
 	unsigned* keymap;
+	unsigned* keymap_hs;
 
 	struct razer_report cmd;
 	struct razer_report out;
@@ -341,28 +343,26 @@ static int tartarus_probe(struct hid_device* dev, const struct hid_device_id* id
 	//    The parent does not have a list of its interfaces, but instead
 	//      its children are given pointers to their parent when detected by the kernel
 	//    These represent the (possibly) multiple interfaces within the usb_device
-	//  hid_device is an indirect child of a usb_interface
+	//  hid_device is a child of a usb_interface
 	struct usb_interface* interface = to_usb_interface(dev->dev.parent);
 	struct usb_device* device = interface_to_usbdev(interface);
+
 	u8 inum = interface->cur_altsetting->desc.bInterfaceNumber;
 
 	// Prepare our data for the private sector
 	device_data = kzalloc(sizeof(struct razer_data), GFP_KERNEL);
 	hid_set_drvdata(dev, device_data);
 
-	// Attempt to start communication with the device
-	status = hid_parse(dev);		// I think this populates dev->X where X is necessary for hid_hw_start()
-	if (status) goto probe_fail;
-
-	status = hid_hw_start(dev, HID_CONNECT_DEFAULT);
-	if (status) goto probe_fail;
-
 	// Prepare the device keymap
+	device_data->hypershift = 0;
+
 	// TODO: parse_keymap(<device_data>, <file>, ...)
 	keymap = device_data->keymap;
 	memset(keymap, 0, sizeof(unsigned) * DEVICE_IDX);
 
 	// Binds (index is 'usage_index', value is desired key scancode)
+	// TODO STRUCT REFACTOR:
+	//	Instead of mapping directly to scan codes, map to a struct to specify direct codes, hypershift codes, or macros (would also solve the hypershift/hypershift button issue)
 	// Decent list of scan codes: https://flint.cs.yale.edu/cs422/doc/art-of-asm/pdf/APNDXC.PDF
 	// Hard-coded is my preferred config
 	keymap[0x1e] = 0x02;		// Key 01 -> 1
@@ -389,13 +389,31 @@ static int tartarus_probe(struct hid_device* dev, const struct hid_device_id* id
 	keymap[0x06] = 0x2f;		// Key 19 -> V
 
 	keymap[0x02] = 0xff;		// Thumb Button -> Hypershift (0xff is not a scan code but an override for us)
-								//				   I could consider moving this to it's own field and checking accordingly
+								//	I could consider moving this to it's own field and checking accordingly
 	keymap[0x52] = 0x48;		// Thumb Hat (U) -> Arrow UP
 	keymap[0x4f] = 0x4d;		// Thumb Hat (R) -> Arrow RIGHT
 	keymap[0x51] = 0x50;		// Thumb Hat (D) -> Arrow DOWN
 	keymap[0x50] = 0x4b;		// Thumb Hat (L) -> Arrow LEFT
 
 	keymap[0x2c] = 0x39;		// Key 20 -> SPACE
+
+	// Copy the default profile so the hypershift is just a modification
+	keymap_hs = device_data->keymap_hypershift;
+	memcpy(keymap_hs, keymap, sizeof(unsigned) * DEVICE_IDX);
+
+	// Hypershift binds
+	keymap[0x1e] = 0x07;		// Key 01 -> 6
+	keymap[0x1f] = 0x08;		// Key 02 -> 7
+	keymap[0x20] = 0x09;		// Key 03 -> 8
+	keymap[0x21] = 0x0a;		// Key 04 -> 9
+	keymap[0x22] = 0x0c;		// Key 05 -> ~
+
+	// Attempt to start communication with the device
+	status = hid_parse(dev);		// I think this populates dev->X where X is necessary for hid_hw_start()
+	if (status) goto probe_fail;
+
+	status = hid_hw_start(dev, HID_CONNECT_DEFAULT);
+	if (status) goto probe_fail;
 
 	// Log to kernel
 	printk(KERN_INFO "HID Driver Bound:  Vendor ID: 0x%02x  Product ID: 0x%02x  Interface Num: 0x%02x\n", id->vendor, id->product, inum);
@@ -445,6 +463,7 @@ static int event_handler(struct hid_device* dev, struct hid_field* field, struct
 	struct razer_data* device_data = hid_get_drvdata(dev);
 	unsigned idx;
 	unsigned code;
+	unsigned* keymap;
 
 	// If we have no device data yet, just perform the default function
 	if (!device_data) return 0;
@@ -466,8 +485,15 @@ static int event_handler(struct hid_device* dev, struct hid_field* field, struct
 	idx = usage->usage_index;
 	if (idx >= DEVICE_IDX) return 0;	// This should never be called but for the sake of due diligence
 
-	code = device_data->keymap[idx];
-	if (code == 0xff) return 1;			// Hypershift (TODO)
+	// Grab the pointer we want depending if we have hypershift on or not
+	keymap = (device_data->hypershift) ? device_data->keymap : device_data->keymap_hypershift;
+	code = keymap[idx];
+	if (code == 0x00) return 1;		// 0x00 means no mapped key
+	else if (code == 0xff) {
+		// Hypershift (TODO)
+		device_data->hypershift = value;
+		return 1;
+	}
 
 	input_event(input, 0x01, code, value);
     return 1;
