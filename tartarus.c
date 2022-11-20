@@ -17,20 +17,20 @@ https://docs.kernel.org/driver-api/usb/usb.html#c.usb_device
 // This is the struct that they put in the hid_device struct itself (at hid_device->dev ???)
 // I *think* this is freeform because it takes a pointer
 struct razer_kbd_device {
-    unsigned int fn_on;
-    DECLARE_BITMAP(pressed_fn, KEY_CNT);	// Pretty sure this reduces to an array of unsigned longs
+	unsigned int fn_on;
+	DECLARE_BITMAP(pressed_fn, KEY_CNT);	// Pretty sure this reduces to an array of unsigned longs
 
-    unsigned char block_keys[3];
-    unsigned char left_alt_on;
+	unsigned char block_keys[3];
+	unsigned char left_alt_on;
 };
 
 
 // Macro for file creation -- Move this to compiled code
 #define CREATE_DEVICE_FILE(dev, type) \
 do { \
-    if(device_create_file(dev, type)) { \
-        goto exit_free; \
-    } \
+	if(device_create_file(dev, type)) { \
+		goto exit_free; \
+	} \
 } while (0)
 
 
@@ -53,9 +53,9 @@ do { \
 
 // This might just be used for FN-key handling (which I do not have)
 struct razer_key_translation {
-    u16 from;
-    u16 to;
-    u8 flags;
+	u16 from;
+	u16 to;
+	u8 flags;
 };
 
 /*/
@@ -81,10 +81,10 @@ MODULE_LICENSE("GPL");
 
 static int tartarus_probe(struct hid_device*, const struct hid_device_id*);
 static void tartarus_disconnect(struct hid_device*);
-// static int event_handler(struct hid_device*, struct hid_field*, struct hid_usage*, int32_t);
+static int event_handler(struct hid_device*, struct hid_field*, struct hid_usage*, int32_t);
 // static int raw_event_handler(struct hid_device*, struct hid_report*, u8*, int);
 static int tartarus_input_mapping(struct hid_device* dev, struct hid_input* input, struct hid_field* field,
-                             struct hid_usage* usage, unsigned long** bit, int* max) { return 0; }
+							 struct hid_usage* usage, unsigned long** bit, int* max) { return 0; }
 
 // Array of USB device ID structs
 static struct hid_device_id id_table [] = {
@@ -94,155 +94,158 @@ static struct hid_device_id id_table [] = {
 
 // Driver metadata struct
 static struct hid_driver tartarus_driver = {
-    .name = "razer_tartarus_usb",
-    .id_table = id_table,
-    .probe = tartarus_probe,
-    .remove = tartarus_disconnect,
-    // .event = event_handler,
-    // .raw_event = raw_event_handler,
-    .input_mapping = tartarus_input_mapping
+	.name = "razer_tartarus_usb",
+	.id_table = id_table,
+	.probe = tartarus_probe,
+	.remove = tartarus_disconnect,
+	.event = event_handler,
+	// .raw_event = raw_event_handler,
+	.input_mapping = tartarus_input_mapping
 };
 
 module_hid_driver(tartarus_driver);
 
 
 // -- DATATYPES --
+// Struct for device private sector
+struct razer_data {
+	int dummy_status;
+};
+
 // Format of the 90 byte device response
-// ^^(Taken directly from OpenRazer)
+// (Taken from OpenRazer)
 struct razer_report {
-    // Response status
-    //  0x00 - New Command
-    //  0x01 - Device Busy
-    //  0x02 - Success
-    //  0x03 - Failure
-    //  0x04 - Timeout
-    //  0x05 - Not Supported
-    unsigned char status;
+	// Response status
+	//  0x00 - New Command
+	//  0x01 - Device Busy
+	//  0x02 - Success
+	//  0x03 - Failure
+	//  0x04 - Timeout
+	//  0x05 - Not Supported
+	unsigned char status;
 
-    // Transaction ID (transaction_id)
-    // Allows for communicating with multiple devices on one USB
-    // (Still haven't figured out how the interface works yet--probably not needed)
-    union _transaction_id {
-        unsigned char id;
-        struct transaction_parts {
-            unsigned char device : 3;
-            unsigned char id : 5;
-        } parts;
-    } tr_id;
+	// Transaction ID (transaction_id)
+	// Allows for communicating with multiple devices on one USB
+	// (Still haven't figured out how the interface works yet--probably not needed)
+	union _transaction_id {
+		unsigned char id;
+		struct transaction_parts {
+			unsigned char device : 3;
+			unsigned char id : 5;
+		} parts;
+	} tr_id;
 
-    // Remaining packets (remaining_packets)
-    // Big endian from device
-    // (Also not sure yet how this is used/what exactly it means in this scope)
-    unsigned short remaining;
+	// Remaining packets (remaining_packets)
+	// Big endian from device
+	// (Also not sure yet how this is used/what exactly it means in this scope)
+	unsigned short remaining;
 
-    // Protocol Type (protocol_type)
-    // Only provided comment is 'always 0x0'
-    // Probably deprecated Razer feature
-    unsigned char type;
+	// Protocol Type (protocol_type)
+	// Only provided comment is 'always 0x0'
+	// Probably deprecated Razer feature
+	unsigned char type;
 
-    // Size of the payload (data_size)
-    // Maximum is 80 bytes as the header and 'footer' components consume 10
-    unsigned char size;
+	// Size of the payload (data_size)
+	// Maximum is 80 bytes as the header and 'footer' components consume 10
+	unsigned char size;
 
-    // Command type (command_class)
-    // Use this to specify what the device should do for us (basically our call parameter)
-    // Device should always return with the same class as the request
-    // ????   Actually this could be command_id - Needs more digging   ?????
-    unsigned char class;
+	// Command type (command_class)
+	// Use this to specify what the device should do for us (basically our call parameter)
+	// Device should always return with the same class as the request
+	// ????   Actually this could be command_id - Needs more digging   ?????
+	unsigned char class;
 
-    // Command ID (command_id)
-    // The exact command we are using
-    // Direction [0] is   Host -> Device
-    //           [1] is Device -> Host
-    union _command_id {
-        unsigned char id;
-        struct command_id_parts {
-            unsigned char direction : 1;
-            unsigned char id : 7;
-        } parts;
-    } cmd_id;
+	// Command ID (command_id)
+	// The exact command we are using
+	// Direction [0] is   Host -> Device
+	//           [1] is Device -> Host
+	union _command_id {
+		unsigned char id;
+		struct command_id_parts {
+			unsigned char direction : 1;
+			unsigned char id : 7;
+		} parts;
+	} cmd_id;
 
-    // Command data
-    // If [Host -> Device] : This is where we place command arguments
-    // If [Device -> Host] : This contains the device response data
-    unsigned char data[80];
+	// Command data
+	// If [Host -> Device] : This is where we place command arguments
+	// If [Device -> Host] : This contains the device response data
+	unsigned char data[80];
 
-    // Argument/Data checksum (crc)
-    // Algorithm XORs each byte of the report, starting at 2 and ending at 87 (inclusive) [Skips bytes 0, 1, 88, 89]
-    unsigned char cksum;
+	// Argument/Data checksum (crc)
+	// Algorithm XORs each byte of the report, starting at 2 and ending at 87 (inclusive) [Skips bytes 0, 1, 88, 89]
+	unsigned char cksum;
 
-    // Unused, always 0x0
-    unsigned char reserved;
+	// Unused, always 0x0
+	unsigned char reserved;
 };
 
 // Create a razer report data type
 // Specifically for use in requesting data from the device
-// (The device will populate this itself when it replies, so some fields need not be variable)
-// Pulled almost directly from OpenRazer
+// (Core operation taken from OpenRazer)
 struct razer_report generate_report(unsigned char class, unsigned char id, unsigned char size) {
-    struct razer_report report = { 0 };
-    // Static values
-    report.tr_id.id = 0xFF;
-    // report.status = 0x00;
-    // report.remaining = 0x00;
-    // report.protocol_type = 0x00;
+	struct razer_report report = { 0 };
+	// Static values
+	report.tr_id.id = 0xFF;
+	// report.status = 0x00;
+	// report.remaining = 0x00;
+	// report.protocol_type = 0x00;
 
-    // Command parameters
-    report.class = class;
-    report.cmd_id.id = id;
-    report.size = size;
+	// Command parameters
+	report.class = class;
+	report.cmd_id.id = id;
+	report.size = size;
 
-    return report;
+	return report;
 }
 
 // Log the a razer report struct to the kernel (currently used for debugging)
-// Also taken mostly from OpenRazer
 void log_report(struct razer_report* report) {
-    char* status_str;
-    char* params_str;
-    int i;      // Top-level loop parameter
+	char* status_str;
+	char* params_str;
+	int i;      // Top-level loop parameter
 
-    // Status
-    switch (report->status) {
-    case 0x00:
-        status_str = "New Command (0x00)";
-        break;
-    case 0x01:
-        status_str = "Device Busy (0x01)";
-        break;
-    case 0x02:
-        status_str = "Success (0x02)";
-        break;
-    case 0x03:
-        status_str = "Failure (0x03)";
-        break;
-    case 0x04:
-        status_str = "Timeout (0x04)";
-        break;
-    case 0x05:
-        status_str = "Not Supported (0x05)";
-        break;
-    default:
-        status_str = "WARNING unexpected status";
-    };
-    
-    // Command params (data)
-    // Length of param string: 80 * 2 chars, + (80 / 2) * 2 spaces + 1 null = 241
-    params_str = (char*) kzalloc(256 * sizeof(char), GFP_KERNEL);
-    for (i = 0; i < 80; i += 2)
-        snprintf(params_str + (3 * i), 7, "%02x%02x%s", report->data[i], report->data[i + 1], ((i + 2) % 8) ? "  " : "\n\t");
-        // snprintf(params_str + (3 * i), 7, "%02x%02x%s", (char) i, (char) (i + 1), ((i + 2) % 8) ? "  " : "\n\t");
+	// Status
+	switch (report->status) {
+	case 0x00:
+		status_str = "New Command (0x00)";
+		break;
+	case 0x01:
+		status_str = "Device Busy (0x01)";
+		break;
+	case 0x02:
+		status_str = "Success (0x02)";
+		break;
+	case 0x03:
+		status_str = "Failure (0x03)";
+		break;
+	case 0x04:
+		status_str = "Timeout (0x04)";
+		break;
+	case 0x05:
+		status_str = "Not Supported (0x05)";
+		break;
+	default:
+		status_str = "WARNING unexpected status";
+	};
+	
+	// Command params (data)
+	// Length of param string: 80 * 2 chars, + (80 / 2) * 2 spaces + 1 null = 241
+	params_str = (char*) kzalloc(250 * sizeof(char), GFP_KERNEL);
+	for (i = 0; i < 80; i += 2)
+		snprintf(params_str + (3 * i), 7, "%02x%02x%s", report->data[i], report->data[i + 1], ((i + 2) % 16) ? "  " : "\n\t");
+		// snprintf(params_str + (3 * i), 7, "%02x%02x%s", (char) i, (char) (i + 1), ((i + 2) % 8) ? "  " : "\n\t");
 
-    printk(KERN_INFO "TARTARUS DEBUG INFORMATION:\n\n\tTransaction ID: 0x%02x\tStatus: %s\n\tCommand ID: 0x%02x\tClass: 0x%02x\n\tSize: 0x%02x (%d)\t\tRemaining Packets: 0x%02x (%d)\n\n\tParams: 0x\n\t%s\n",
-           report->tr_id.id,
-           status_str,
-           report->size, report->size,
-           report->remaining, report->remaining,
-           report->class,
-           report->cmd_id.id,
-           params_str);
+	printk(KERN_INFO "TARTARUS DEBUG INFORMATION:\n\n\tTransaction ID: 0x%02x\tStatus: %s\n\tCommand ID: 0x%02x\tClass: 0x%02x\n\tSize: 0x%02x (%d)\t\tRemaining Packets: 0x%02x (%d)\n\n\tData: 0x\n\t%s\n",
+		   report->tr_id.id,
+		   status_str,
+		   report->size, report->size,
+		   report->remaining, report->remaining,
+		   report->class,
+		   report->cmd_id.id,
+		   params_str);
 
-    kfree(params_str);
+	kfree(params_str);
 }
 
 
@@ -250,11 +253,11 @@ void log_report(struct razer_report* report) {
 // Calculate report checksum
 // ^^Taken directly from OpenRazer driver
 unsigned char razer_checksum(struct razer_report* report) {
-    unsigned char ck = 0;
-    unsigned char* bytes = (unsigned char*) report;
+	unsigned char ck = 0;
+	unsigned char* bytes = (unsigned char*) report;
 
-    for (int i = 2; i < 88; i++) ck ^= bytes[i];
-    return ck;
+	for (int i = 2; i < 88; i++) ck ^= bytes[i];
+	return ck;
 }
 
 // Monolithic function to communcate with device
@@ -264,104 +267,161 @@ unsigned char razer_checksum(struct razer_report* report) {
 // Core functionality taken from OpenRazer
 // POTENTIAL TODO: Change this to take a usb_device instead of an hid_device
 static struct razer_report send_command(struct hid_device* dev, struct razer_report* req, int* cmd_errno) {
-    char* request;      // razer_report containing the command parameters (i.e. get layout/set lighting pattern/etc)
-    int received = -1;  // Amount of data transferred (result of usb_control_msg)
+	char* request;      // razer_report containing the command parameters (i.e. get layout/set lighting pattern/etc)
+	int received = -1;  // Amount of data transferred (result of usb_control_msg)
 
-    // Cast our HID device to a USB device (I want to think there's a better option than this?)
-    struct usb_interface* parent = to_usb_interface(dev->dev.parent);
-    struct usb_device* tartarus = interface_to_usbdev(parent);
+	struct usb_interface* parent = to_usb_interface(dev->dev.parent);
+	struct usb_device* tartarus = interface_to_usbdev(parent);
 
-    // Function output
-    struct razer_report response = { 0 };
+	// Function output
+	struct razer_report response = { 0 };
 
-    // Allocate necessary memory and check for errors
-    request = (char*) kzalloc(sizeof(struct razer_report), GFP_KERNEL);
-    if (!request) {         // (!(request && response))
-        printk(KERN_WARNING "Failed to communcate with device: Out of memory.\n");
-        if (cmd_errno) *cmd_errno = -ENOMEM;
-        return response;
-    }
+	// Allocate necessary memory and check for errors
+	request = (char*) kzalloc(sizeof(struct razer_report), GFP_KERNEL);
+	if (!request) {         // (!(request && response))
+		printk(KERN_WARNING "Failed to communcate with device: Out of memory.\n");
+		if (cmd_errno) *cmd_errno = -ENOMEM;
+		return response;
+	}
 
-    // Copy data from our request struct to the fresh pointer
-    req->cksum = razer_checksum(req);
-    memcpy(request, req, sizeof(struct razer_report));
+	// Copy data from our request struct to the fresh pointer
+	req->cksum = razer_checksum(req);
+	memcpy(request, req, sizeof(struct razer_report));
 
-    // Step one - Attempt to send the control report
-    // This sends the data to the device and sets the internal "respond to me" bit
-    //  0x09 --> HID_REQ_SET_REPORT
-    //  0X21 --> USB_TYPE_CLASS | USB_RECIP_INTERFACE | USB_DIR_OUT
-    received = usb_control_msg(tartarus, usb_sndctrlpipe(tartarus, 0), 0x09, 0X21, 0x300, REPORT_IDX, request, REPORT_LEN, USB_CTRL_SET_TIMEOUT);
-    usleep_range(WAIT_MIN, WAIT_MAX);
-    if (received != REPORT_LEN) {
-        printk(KERN_WARNING "Device data transfer failed.\n");
-        if (cmd_errno) *cmd_errno = (received < 0) ? received : -EIO;
-        goto send_command_exit;
-    }
+	// Step one - Attempt to send the control report
+	// This sends the data to the device and sets the internal "respond to me" bit
+	//  0x09 --> HID_REQ_SET_REPORT
+	//  0X21 --> USB_TYPE_CLASS | USB_RECIP_INTERFACE | USB_DIR_OUT
+	// (Looks like this can also be done with usb_fill_control_urb followed by usb_submit_urb functions)
+	received = usb_control_msg(tartarus, usb_sndctrlpipe(tartarus, 0), 0x09, 0X21, 0x300, REPORT_IDX, request, REPORT_LEN, USB_CTRL_SET_TIMEOUT);
+	usleep_range(WAIT_MIN, WAIT_MAX);
+	if (received != REPORT_LEN) {
+		printk(KERN_WARNING "Device data transfer failed.\n");
+		if (cmd_errno) *cmd_errno = (received < 0) ? received : -EIO;
+		goto send_command_exit;
+	}
 
-    // Step two - Attempt to get the data out
-    // We've prepared an empty buffer, and the device will populate it
-    //  0x01 --> HID_REQ_GET_REPORT
-    //  0XA1 --> USB_TYPE_CLASS | USB_RECIP_INTERFACE | USB_DIR_IN0x00, 0x86, 0x02
-    memset(request, 0, sizeof(struct razer_report));
-    received = usb_control_msg(tartarus, usb_rcvctrlpipe(tartarus, 0), 0x01, 0XA1, 0x300, REPORT_IDX, request, REPORT_LEN, USB_CTRL_SET_TIMEOUT);
-    if (received != REPORT_LEN) {
-        // An error here will likely be a mismatched data len
-        // We will still return, but should warn that the data might be invalid
-        printk(KERN_WARNING "Invalid device data transfer. (%d bytes != %d bytes)\n", received, REPORT_LEN);
-        if (cmd_errno) *cmd_errno = received;
-    }
+	// Step two - Attempt to get the data out
+	// We've prepared an empty buffer, and the device will populate it
+	//  0x01 --> HID_REQ_GET_REPORT
+	//  0XA1 --> USB_TYPE_CLASS | USB_RECIP_INTERFACE | USB_DIR_IN0x00, 0x86, 0x02
+	memset(request, 0, sizeof(struct razer_report));
+	received = usb_control_msg(tartarus, usb_rcvctrlpipe(tartarus, 0), 0x01, 0XA1, 0x300, REPORT_IDX, request, REPORT_LEN, USB_CTRL_SET_TIMEOUT);
+	if (received != REPORT_LEN) {
+		// An error here will likely be a mismatched data len
+		// We will still return, but should warn that the data might be invalid
+		printk(KERN_WARNING "Invalid device data transfer. (%d bytes != %d bytes)\n", received, REPORT_LEN);
+		if (cmd_errno) *cmd_errno = received;
+	}
 
-    // We aren't referencing the buffer so we copy it to the stack (rename if response var is used)
-    memcpy(&response, request, sizeof(struct razer_report));
+	// We aren't referencing the buffer so we copy it to the stack (rename if response var is used)
+	memcpy(&response, request, sizeof(struct razer_report));
 
-send_command_exit:
-    // Final cleanup
-    kfree(request);
-    return response;
+	send_command_exit:
+	// Final cleanup
+	kfree(request);
+	return response;
 }
 
 // Called when the device is bound
 // Reference razerkbd_driver.c - Line 3184
 static int tartarus_probe(struct hid_device* dev, const struct hid_device_id* id) {
-    struct razer_report cmd;
-    struct razer_report out;
+	int status;
+	struct razer_data* device_data = NULL;
 
-    // TODO Detect device interfaces
-    
-    // TODO Add interface num
-    printk(KERN_INFO "USB Driver Bound:  Vendor ID: 0x%02x  Product ID: 0x%02x\n", id->vendor, id->product);
+	struct razer_report cmd;
+	struct razer_report out;
 
-    // struct usb_interface interface = to_usb_interface(dev->dev.parent);
-    // set up a device struct and device files if any
+	// Cast our HID device to a USB device
+	// My current understanding of the hierarchy:
+	//  usb_device is the full representation of the device to the kernel
+	//  usb_interface is a "sub-device" of a usb_device
+	//    The parent does not have a list of its interfaces, but instead
+	//      its children are given pointers to their parent when detected by the kernel
+	//    These represent the (possibly) multiple interfaces within the usb_device
+	//  hid_device is an indirect child of a usb_interface
+	struct usb_interface* interface = to_usb_interface(dev->dev.parent);
+	struct usb_device* device = interface_to_usbdev(interface);
+	u8 inum = interface->cur_altsetting->desc.bInterfaceNumber;
 
-    // Device interfacing test
-    // struct razer_report cmd = generate_report(CMD_SET_LED);
-    // cmd.data[0] = 0x00;
-    // cmd.data[1] = 0x0D;     // Green LED (profile indicicator)
-    // cmd.data[2] = 0x01;     // ON
+	// Prepare our data for the private sector
+	device_data = kzalloc(sizeof(struct razer_data), GFP_KERNEL);
+	hid_set_drvdata(dev, device_data);
 
-    cmd = generate_report(CMD_KBD_LAYOUT);
-    out = send_command(dev, &cmd, NULL);
-    log_report(&out);
+	// Attempt to start communication with the device
+	status = hid_parse(dev);		// I think this populates dev->X where X is necessary for hid_hw_start()
+	if (status) goto probe_fail;
 
-    return 0;
+	status = hid_hw_start(dev, HID_CONNECT_DEFAULT);
+	if (status) goto probe_fail;
+
+	// *device_data = status;
+
+	/*/ Device interfacing test
+	if (inum == 0) {
+		cmd = generate_report(CMD_SET_LED);
+		cmd.data[1] = 0x0D;     // Green LED (profile indicicator)
+		cmd.data[2] = 0x01;     // ON
+		out = send_command(dev, &cmd, NULL);
+		log_report(&out);
+	} /*/
+
+	printk(KERN_INFO "HID Driver Bound:  Vendor ID: 0x%02x  Product ID: 0x%02x  Interface Num: 0x%02x\n", id->vendor, id->product, inum);
+	printk(KERN_INFO "HID Device Info:  devnum: %d  devpath: %s\n", device->devnum, device->devpath);	// For debugging
+	// printk(KERN_INFO "HID Device Info:  ll_driver: %p\n", dev->ll_driver);								// For debugging
+
+	cmd = generate_report(CMD_KBD_LAYOUT);
+	out = send_command(dev, &cmd, NULL);
+	log_report(&out);
+
+	return 0;
+
+	probe_fail:
+	if (device_data) kfree(device_data);
+	printk(KERN_WARNING "Failed to start HID device: Razer Tartarus");
+		return status;
 }
 
 // Called when the device is unbound
 static void tartarus_disconnect(struct hid_device* dev) {
-    // Debugging output
-    printk(KERN_INFO "USB Driver Unbound (Tartarus)\n");
+	// Get the device data
+	struct razer_data* device_data = hid_get_drvdata(dev);
+
+	// Stop the device 
+	// if (!(*device_data)) hid_hw_stop(dev);
+	hid_hw_stop(dev);
+
+	// Memory cleanup
+	if (device_data) kfree(device_data);
+
+	printk(KERN_INFO "HID Driver Unbound (Tartarus)\n");
 }
 
 // Called for every standard device event
 // (Still unsure what is standard vs raw and when either is triggered)
-// static int event_handler(struct hid_device* dev, struct hid_field* field, struct hid_usage* usage, int32_t value) {
-//     printk(KERN_INFO "Event handler called :)\n");
-//     return 0;
-// }
+static int event_handler(struct hid_device* dev, struct hid_field* field, struct hid_usage* usage, int32_t value) {
+	struct input_dev *input;
+	
+    printk(KERN_INFO "Event Info:  value: %d  hid:%d\n", value, usage->hid);
 
-// // Called for every raw device event
+	// hidinput_hid_event(dev, field, usage, value);
+	input = field->hidinput->input;
+
+	// [EVENT HANDLER]  https://elixir.bootlin.com/linux/latest/source/drivers/hid/hid-core.c#L1507
+	// [INPUT PARSER]   https://elixir.bootlin.com/linux/latest/source/drivers/hid/hid-input.c#L1443
+	
+	// [DOCUMENTATION]  https://elixir.bootlin.com/linux/latest/source/drivers/input/input.c#L423
+	input_event(input, usage->type, usage->code, value);
+
+	// If this is 0, the default handler finishes its execution, calling the input parser
+    return 1;
+}
+
+// Called for every raw device event
 // static int raw_event_handler(struct hid_device* dev, struct hid_report* report, u8* data, int size) {
-//     printk(KERN_INFO "Raw event handler called :O\n");
+// 	if (!data | !report) return -1;
+// 	struct usb_interface* interface = to_usb_interface(dev->dev.parent);
+
+//     printk(KERN_INFO "Event Info:  inum: 0x%02x  report_id: %d  data: 0x%02x\n", interface->cur_altsetting->desc.bInterfaceNumber, report->id, *data);
 //     return 0;
 // }
