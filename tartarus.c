@@ -3,35 +3,52 @@
 #include <linux/usb.h>      // This import might not be needed
 #include <linux/hid.h>
 #include <linux/string.h>   // For use with memset and memcpy
-// #include <linux/usb/input.h>
-// #include <linux/slab.h>
-// #include <linux/dmi.h>
 
+// -- DRIVER METADATA --
+MODULE_AUTHOR("Drayux");
+MODULE_DESCRIPTION("Tartarus V2 Driver");
+MODULE_LICENSE("GPL");
+
+// -- DEVICE SUPPORT --
+#define VENDOR_ID	0x1532		// Razer USA, Ltd
+#define PRODUCT_ID	0x022b		// Tartarus_V2
+
+// -- DEVICE INTERFACING --
+#define REPORT_LEN  0x5A        // Each USB report has 90 bytes
+#define REPORT_IDX  0x01        // Report/Response (consistent across all devices so I don't think I need two defs)
+#define WAIT_MIN    600         // Minmum response wait time is 600 microseconds (0.6 ms)
+#define WAIT_MAX    800         // ^^Maximum is 800 us (0.8 ms)
+
+// Commands
+#define CMD_KBD_LAYOUT      0x00, 0x86, 0x02        // Query the device for its keyboard layout
+#define CMD_SET_LED         0x03, 0x00, 0x03        // Set a specified LED with a given value
+
+// Custom Keymapping
+#define USAGE_IDX	90			// Highest index on the device
+#define DEVICE_IDX	256			// Maximum usage index (aka how long our conversion map should be)
+
+// Mapping events (u8 type)
+#define CTRL_NOP		0x00	// No key action
+#define CTRL_KEYMAP 	0x01	// Keyboard button action
+#define CTRL_HYPERSHIFT 0x02	// Hypershift mode action	(TODO hold/toggle options)
+#define CTRL_MACRO		0x03	// Play macro action 		(TODO play while held/toggle options)
+#define CTRL_PROFILE	0x04	// Change profile action	(TODO any of this part lmaoo--gonna save it for last because I don't use it)
 
 /*/ MISCELLANEOUS THINGS I MIGHT NEED
 
-// usb_device struct reference
-https://docs.kernel.org/driver-api/usb/usb.html#c.usb_device
-
-
-// This is the struct that they put in the hid_device struct itself (at hid_device->dev ???)
-// I *think* this is freeform because it takes a pointer
-struct razer_kbd_device {
-	unsigned int fn_on;
-	DECLARE_BITMAP(pressed_fn, KEY_CNT);	// Pretty sure this reduces to an array of unsigned longs
-
-	unsigned char block_keys[3];
-	unsigned char left_alt_on;
-};
-
-
-// Macro for file creation -- Move this to compiled code
-#define CREATE_DEVICE_FILE(dev, type) \
-do { \
-	if(device_create_file(dev, type)) { \
-		goto exit_free; \
-	} \
-} while (0)
+// HID Event types (https://www.kernel.org/doc/html/latest/input/event-codes.html)
+EV_SYN: 		Used as markers to separate events. Events may be separated in time or in space, such as with the multitouch protocol.
+EV_KEY: 		Used to describe state changes of keyboards, buttons, or other key-like devices.
+EV_REL: 		Used to describe relative axis value changes, e.g. moving the mouse 5 units to the left.
+EV_ABS: 		Used to describe absolute axis value changes, e.g. describing the coordinates of a touch on a touchscreen.
+EV_MSC: 		Used to describe miscellaneous input data that do not fit into other types.
+EV_SW: 			Used to describe binary state input switches.
+EV_LED: 		Used to turn LEDs on devices on and off.
+EV_SND: 		Used to output sound to devices.
+EV_REP: 		Used for autorepeating devices.
+EV_FF: 			Used to send force feedback commands to an input device.
+EV_PWR: 		A special type for power button and switch input.
+EV_FF_STATUS: 	Used to receive force feedback device status.
 
 
 // LED definitions
@@ -43,14 +60,6 @@ do { \
 // ...
 
 
-// Report Responses -- DEFINITELY NEED THESE
-#define RAZER_CMD_BUSY          0x01
-#define RAZER_CMD_SUCCESSFUL    0x02
-#define RAZER_CMD_FAILURE       0x03
-#define RAZER_CMD_TIMEOUT       0x04
-#define RAZER_CMD_NOT_SUPPORTED 0x05
-
-
 // This might just be used for FN-key handling (which I do not have)
 struct razer_key_translation {
 	u16 from;
@@ -58,28 +67,21 @@ struct razer_key_translation {
 	u8 flags;
 };
 
+
+Mass event broadcasts:
+Index	Key		Code	Lookup column
+0x00 -> CTRL 	(0x1D)
+0X01 -> LSHIFT 	(0x2A)
+0X02 -> ALT		(0x38)
+0X03 -> ]} ???	(0x7D) : shift / ctrl / shift caps / shift num
+0X04 -> A  ???	(0x61) : ascii / num / shift caps
+0X05 -> RSHIFT 	(0x36)
+0X06 -> D  ???	(0x64) : ascii / num / shift caps
+0X07 -> `~ ???	(0x7E) : shift / shift caps / shift num
+
+Pretty sure the unknowns are: LWIN, RWIN, RCTRL, RALT
+
 /*/
-
-// -- DRIVER METADATA --
-MODULE_AUTHOR("Drayux");
-MODULE_DESCRIPTION("Tartarus V2 Driver");
-MODULE_LICENSE("GPL");
-
-
-// -- DEVICE SUPPORT --
-#define VENDOR_ID	0x1532		// Razer USA, Ltd
-#define PRODUCT_ID	0x022b		// Tartarus_V2
-
-#define REPORT_LEN  0x5A        // Each USB report has 90 bytes
-#define REPORT_IDX  0x01        // Report/Response (consistent across all devices so I don't think I need two defs)
-#define USAGE_IDX	256			// Maximum usage index (aka how long our conversion map should be)
-#define DEVICE_IDX	96			// Highest index on the device
-#define WAIT_MIN    600         // Minmum response wait time is 600 microseconds (0.6 ms)
-#define WAIT_MAX    800         // ^^Maximum is 800 us (0.8 ms)
-
-// Device commands
-#define CMD_KBD_LAYOUT      0x00, 0x86, 0x02        // Query the device for its keyboard layout
-#define CMD_SET_LED         0x03, 0x00, 0x03        // Set a specified LED with a given value
 
 static int tartarus_probe(struct hid_device*, const struct hid_device_id*);
 static void tartarus_disconnect(struct hid_device*);
@@ -111,8 +113,8 @@ module_hid_driver(tartarus_driver);
 // TODO DEVICE PROFILES (probably going to reset keymap/keymap_hypershift with a load function?)
 struct razer_data {
 	int32_t hypershift;
-	unsigned keymap[DEVICE_IDX];
-	unsigned keymap_hypershift[DEVICE_IDX];
+	unsigned keymap[USAGE_IDX];
+	unsigned keymap_hypershift[USAGE_IDX];
 };
 
 // Format of the 90 byte device response
@@ -358,7 +360,7 @@ static int tartarus_probe(struct hid_device* dev, const struct hid_device_id* id
 
 	// TODO: parse_keymap(<device_data>, <file>, ...)
 	keymap = device_data->keymap;
-	memset(keymap, 0, sizeof(unsigned) * DEVICE_IDX);
+	memset(keymap, 0, sizeof(unsigned) * USAGE_IDX);
 
 	// Binds (index is 'usage_index', value is desired key scancode)
 	// TODO STRUCT REFACTOR:
@@ -383,12 +385,12 @@ static int tartarus_probe(struct hid_device* dev, const struct hid_device_id* id
 	keymap[0x07] = 0x20;		// Key 14 -> D
 	keymap[0x09] = 0x21;		// Key 15 -> F
 
-	keymap[0x01] = 0x2c;		// Key 16 -> Z
-	keymap[0x1d] = 0x2d;		// Key 17 -> X
-	keymap[0x1b] = 0x2e;		// Key 18 -> C
-	keymap[0x06] = 0x2f;		// Key 19 -> V
+	keymap[0x01] = 0x2a;		// Key 16 -> SHIFT
+	keymap[0x1d] = 0x2c;		// Key 17 -> Z
+	keymap[0x1b] = 0x2d;		// Key 18 -> X
+	keymap[0x06] = 0x2e;		// Key 19 -> C
 
-	keymap[0x02] = 0xff;		// Thumb Button -> Hypershift (0xff is not a scan code but an override for us)
+	// keymap[0x02] = 0xfe;		// Thumb Button -> Hypershift (0xfe is not a scan code but an override for us)
 								//	I could consider moving this to it's own field and checking accordingly
 	keymap[0x52] = 0x48;		// Thumb Hat (U) -> Arrow UP
 	keymap[0x4f] = 0x4d;		// Thumb Hat (R) -> Arrow RIGHT
@@ -398,15 +400,15 @@ static int tartarus_probe(struct hid_device* dev, const struct hid_device_id* id
 	keymap[0x2c] = 0x39;		// Key 20 -> SPACE
 
 	// Copy the default profile so the hypershift is just a modification
-	keymap_hs = device_data->keymap_hypershift;
-	memcpy(keymap_hs, keymap, sizeof(unsigned) * DEVICE_IDX);
+	// keymap_hs = device_data->keymap_hypershift;
+	// memcpy(keymap_hs, keymap, sizeof(unsigned) * USAGE_IDX);
 
 	// Hypershift binds
-	keymap_hs[0x1e] = 0x07;		// Key 01 -> 6
-	keymap_hs[0x1f] = 0x08;		// Key 02 -> 7
-	keymap_hs[0x20] = 0x09;		// Key 03 -> 8
-	keymap_hs[0x21] = 0x0a;		// Key 04 -> 9
-	keymap_hs[0x22] = 0x0c;		// Key 05 -> ~
+	// keymap_hs[0x1e] = 0x07;		// Key 01 -> 6
+	// keymap_hs[0x1f] = 0x08;		// Key 02 -> 7
+	// keymap_hs[0x20] = 0x09;		// Key 03 -> 8
+	// keymap_hs[0x21] = 0x0a;		// Key 04 -> 9
+	// keymap_hs[0x22] = 0x0c;		// Key 05 -> ~
 
 	// Attempt to start communication with the device
 	status = hid_parse(dev);		// I think this populates dev->X where X is necessary for hid_hw_start()
@@ -457,7 +459,9 @@ static void tartarus_disconnect(struct hid_device* dev) {
 // Useful links (for my personal reference lmaooo)
 // [EVENT HANDLER]  https://elixir.bootlin.com/linux/latest/source/drivers/hid/hid-core.c#L1507
 // [INPUT PARSER]   https://elixir.bootlin.com/linux/latest/source/drivers/hid/hid-input.c#L1443
-// [INPUT EVENT]  https://elixir.bootlin.com/linux/latest/source/drivers/input/input.c#L423
+// [INPUT EVENT]  	https://elixir.bootlin.com/linux/latest/source/drivers/input/input.c#L423
+// [HID DRIVER]		https://elixir.bootlin.com/linux/latest/source/include/linux/hid.h#L776
+// It could be worth attempting to use the input mapping feature, however this might make macros and hypershift less practical?
 static int event_handler(struct hid_device* dev, struct hid_field* field, struct hid_usage* usage, int32_t value) {
 	struct input_dev *input;
 	struct razer_data* device_data = hid_get_drvdata(dev);
@@ -468,8 +472,8 @@ static int event_handler(struct hid_device* dev, struct hid_field* field, struct
 	// If we have no device data yet, just perform the default function
 	if (!device_data) return 0;
 
-	// If the request is missing data, just pass it through (not sure what to do here--just want memory safety)
-	if (!field || !field->hidinput || !usage->type) return 0;
+	// If the request is missing data, raise an error (not sure what to do here--just want memory safety)
+	if (!field || !field->hidinput || !usage->type) return -1;
 	input = field->hidinput->input;
 
 	// TODO: There are some "extra" events for every main event, usage_index 0 -> 7 are sent with value 0 every event
@@ -479,7 +483,9 @@ static int event_handler(struct hid_device* dev, struct hid_field* field, struct
 	// if (usage->type != 0x01) return 0;	// Disabled for debugging
 
 	// Some testing to figure out codes
-	// /*if (value)*/ printk(KERN_INFO "Event Info:  code: 0x%04x  type: 0x%04x  index: 0x%04x  value: 0x%04x\n", usage->code, usage->type, usage->usage_index, value);
+	/*if (value)*/
+	printk(KERN_INFO "Event Info:  type: 0x%02x  code: 0x%02x  value: 0x%02x  index: 0x%02x  hid: 0x%08x\n", usage->type, usage->code, value, usage->usage_index, usage->hid);
+	if (usage->usage_index > 0x07) printk("\n");
 
 	// Lookup our keycode and send the data
 	idx = usage->usage_index;
@@ -489,16 +495,15 @@ static int event_handler(struct hid_device* dev, struct hid_field* field, struct
 
 	// Grab the pointer we want depending if we have hypershift on or not
 	// keymap = (device_data->hypershift) ? device_data->keymap_hypershift : device_data->keymap;
+	// keymap = device_data->keymap;
 	// code = keymap[idx];
-	// if (code == 0x00) return 1;		// 0x00 means no mapped key
-	// else if (code == 0xff) {
-	// 	// Hypershift (TODO)
+	// if (code == 0x00) return 1;				// 0x00 means no mapping
+	// if (code == 0xff) code = usage->code;	// 0xff means default mapping
+	// else if (code == 0xfe) {					// 0xfe is hypershift
 	// 	device_data->hypershift = value;
 	// 	return 1;
 	// }
-
-	// keymap = device_data->keymap;
-	// code = keymap[idx];
+	// if (code == 0x00) code = usage->code;
 
 	// input_event(input, 0x01, code, value);
 	input_event(input, usage->type, usage->code, value);
