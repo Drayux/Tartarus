@@ -10,79 +10,33 @@ MODULE_DESCRIPTION("Tartarus V2 Driver");
 MODULE_LICENSE("GPL");
 
 // -- DEVICE SUPPORT --
-#define VENDOR_ID	0x1532		// Razer USA, Ltd
-#define PRODUCT_ID	0x022b		// Tartarus_V2
+#define VENDOR_ID		0x1532		// Razer USA, Ltd
+#define PRODUCT_ID		0x022b		// Tartarus_V2
 
 // -- DEVICE INTERFACING --
-#define REPORT_LEN  0x5A        // Each USB report has 90 bytes
-#define REPORT_IDX  0x01        // Report/Response (consistent across all devices so I don't think I need two defs)
-#define WAIT_MIN    600         // Minmum response wait time is 600 microseconds (0.6 ms)
-#define WAIT_MAX    800         // ^^Maximum is 800 us (0.8 ms)
+#define REPORT_LEN  	0x5A		// Each USB report has 90 bytes
+#define REPORT_IDX  	0x01		// Report/Response (consistent across all devices so I don't think I need two defs)
+#define WAIT_MIN    	600         // Minmum response wait time is 600 microseconds (0.6 ms)
+#define WAIT_MAX    	800         // ^^Maximum is 800 us (0.8 ms)
 
-// Commands
-#define CMD_KBD_LAYOUT      0x00, 0x86, 0x02        // Query the device for its keyboard layout
-#define CMD_SET_LED         0x03, 0x00, 0x03        // Set a specified LED with a given value
+#define KEYLIST_LEN		8			// Maximum number of entries in the list of keys reported by the device
 
-// Custom Keymapping
-#define USAGE_IDX	90			// Highest index on the device
-#define DEVICE_IDX	256			// Maximum usage index (aka how long our conversion map should be)
+#define MODKEY_MASK		0x80		// Applied to all modkey keycodes (i.e. 0000 0010 (lshift) -> 1000 0010)
+#define MODKEY_SHIFT	0x02		// Bit pattern for the shift key (key 16)
+#define MODKEY_ALT		0x04		// Bit pattern for the alt key (circular thumb button)
 
 // Mapping events (u8 type)
-#define CTRL_NOP		0x00	// No key action
-#define CTRL_KEYMAP 	0x01	// Keyboard button action
-#define CTRL_HYPERSHIFT 0x02	// Hypershift mode action	(TODO hold/toggle options)
-#define CTRL_MACRO		0x03	// Play macro action 		(TODO play while held/toggle options)
-#define CTRL_PROFILE	0x04	// Change profile action	(TODO any of this part lmaoo--gonna save it for last because I don't use it)
+#define CTRL_NOP		0x00		// No key action
+#define CTRL_KEYMAP 	0x01		// Keyboard button action
+#define CTRL_HYPERSHIFT 0x02		// Hypershift mode action	(TODO hold/toggle options)
+#define CTRL_MACRO		0x03		// Play macro action 		(TODO play while held/toggle options)
+#define CTRL_PROFILE	0x04		// Change profile action	(TODO any of this part--gonna save it for last because I don't use it)
 
-/*/ MISCELLANEOUS THINGS I MIGHT NEED
+// Commands
+#define CMD_KBD_LAYOUT  0x00, 0x86, 0x02	// Query the device for its keyboard layout
+#define CMD_SET_LED     0x03, 0x00, 0x03	// Set a specified LED with a given value
 
-// HID Event types (https://www.kernel.org/doc/html/latest/input/event-codes.html)
-EV_SYN: 		Used as markers to separate events. Events may be separated in time or in space, such as with the multitouch protocol.
-EV_KEY: 		Used to describe state changes of keyboards, buttons, or other key-like devices.
-EV_REL: 		Used to describe relative axis value changes, e.g. moving the mouse 5 units to the left.
-EV_ABS: 		Used to describe absolute axis value changes, e.g. describing the coordinates of a touch on a touchscreen.
-EV_MSC: 		Used to describe miscellaneous input data that do not fit into other types.
-EV_SW: 			Used to describe binary state input switches.
-EV_LED: 		Used to turn LEDs on devices on and off.
-EV_SND: 		Used to output sound to devices.
-EV_REP: 		Used for autorepeating devices.
-EV_FF: 			Used to send force feedback commands to an input device.
-EV_PWR: 		A special type for power button and switch input.
-EV_FF_STATUS: 	Used to receive force feedback device status.
-
-
-// LED definitions
-#define ZERO_LED          0x00
-// ...
-#define RED_PROFILE_LED   0x0C
-#define GREEN_PROFILE_LED 0x0D
-#define BLUE_PROFILE_LED  0x0E
-// ...
-
-
-// This might just be used for FN-key handling (which I do not have)
-struct razer_key_translation {
-	u16 from;
-	u16 to;
-	u8 flags;
-};
-
-
-Mass event broadcasts:
-Index	Key		Code	Lookup column
-0x00 -> CTRL 	(0x1D)
-0X01 -> LSHIFT 	(0x2A)
-0X02 -> ALT		(0x38)
-0X03 -> ]} ???	(0x7D) : shift / ctrl / shift caps / shift num
-0X04 -> A  ???	(0x61) : ascii / num / shift caps
-0X05 -> RSHIFT 	(0x36)
-0X06 -> D  ???	(0x64) : ascii / num / shift caps
-0X07 -> `~ ???	(0x7E) : shift / shift caps / shift num
-
-Pretty sure the unknowns are: LWIN, RWIN, RCTRL, RALT
-
-/*/
-
+// Event hooks
 static int input_config (struct hid_device*, struct hid_input*);
 static int device_probe(struct hid_device*, const struct hid_device_id*);
 static void device_disconnect(struct hid_device*);
@@ -112,14 +66,19 @@ module_hid_driver(tartarus_driver);
 
 
 // -- STRUCTS --
+// TODO struct for keymap
+
 // Struct for device private sector
 //  ^^Specifically for keyboard device (inum 0x00)
 // TODO DEVICE PROFILES (probably going to reset keymap/keymap_hypershift with a load function?)
 // TODO private sector for mouse device
 struct keyboard_data {
-	int32_t hypershift;
-	unsigned keymap[USAGE_IDX];
-	unsigned keymap_hypershift[USAGE_IDX];
+	int keycount;
+	u8 keylist[KEYLIST_LEN];
+	u8 modkey;
+	// int32_t hypershift;
+	// unsigned keymap[USAGE_IDX];
+	// unsigned keymap_hypershift[USAGE_IDX];
 };
 
 // Format of the 90 byte device response
@@ -191,7 +150,7 @@ struct razer_report {
 };
 
 // Log the a razer report struct to the kernel (currently used for debugging)
-void log_report(struct razer_report* report) {
+void log_report (struct razer_report* report) {
 	char* status_str;
 	char* params_str;
 	int i;      // Top-level loop parameter
@@ -225,7 +184,6 @@ void log_report(struct razer_report* report) {
 	params_str = (char*) kzalloc(250 * sizeof(char), GFP_KERNEL);
 	for (i = 0; i < 80; i += 2)
 		snprintf(params_str + (3 * i), 7, "%02x%02x%s", report->data[i], report->data[i + 1], ((i + 2) % 16) ? "  " : "\n\t");
-		// snprintf(params_str + (3 * i), 7, "%02x%02x%s", (char) i, (char) (i + 1), ((i + 2) % 8) ? "  " : "\n\t");
 
 	printk(KERN_INFO "TARTARUS DEBUG INFORMATION:\n\n\tTransaction ID: 0x%02x\tStatus: %s\n\tCommand ID: 0x%02x\tClass: 0x%02x\n\tSize: 0x%02x (%d)\t\tRemaining Packets: 0x%02x (%d)\n\n\tData: 0x\n\t%s\n",
 		   report->tr_id.id,
@@ -242,7 +200,7 @@ void log_report(struct razer_report* report) {
 // Create a razer report data type
 // Specifically for use in requesting data from the device
 // (Core operation taken from OpenRazer)
-struct razer_report generate_report(unsigned char class, unsigned char id, unsigned char size) {
+struct razer_report generate_report (unsigned char class, unsigned char id, unsigned char size) {
 	struct razer_report report = { 0 };
 	// Static values
 	report.tr_id.id = 0xFF;
@@ -262,7 +220,7 @@ struct razer_report generate_report(unsigned char class, unsigned char id, unsig
 // -- DEVICE INTERFACING --
 // Calculate report checksum
 // (From OpenRazer)
-unsigned char razer_checksum(struct razer_report* report) {
+unsigned char razer_checksum (struct razer_report* report) {
 	unsigned char ck = 0;
 	unsigned char* bytes = (unsigned char*) report;
 
@@ -275,7 +233,7 @@ unsigned char razer_checksum(struct razer_report* report) {
 // Use req (aka the request report) to specify the command to send
 // cmd_errno can be NULL (but shouldn't be)
 // (Logic from OpenRazer)
-static struct razer_report send_command(struct hid_device* dev, struct razer_report* req, int* cmd_errno) {
+static struct razer_report send_command (struct hid_device* dev, struct razer_report* req, int* cmd_errno) {
 	char* request;      // razer_report containing the command parameters (i.e. get layout/set lighting pattern/etc)
 	int received = -1;  // Amount of data transferred (result of usb_control_msg)
 
@@ -341,7 +299,7 @@ static int input_config (struct hid_device* dev, struct hid_input* input) {
 	struct input_dev* input_dev = input->input;
 
 	set_bit(EV_KEY, input_dev->evbit);
-	for (int i = 0; i < 20; i++) set_bit(KEY_MACRO1 + i, input_dev->keybit);
+	for (int i = 0; i < 25; i++) set_bit(KEY_MACRO1 + i, input_dev->keybit);
 
 	return 0;
 }
@@ -349,7 +307,7 @@ static int input_config (struct hid_device* dev, struct hid_input* input) {
 // DEVICE PROBE
 // Set up private device data
 // Debug: Send sample URB for keyboard layout
-static int device_probe(struct hid_device* dev, const struct hid_device_id* id) {
+static int device_probe (struct hid_device* dev, const struct hid_device_id* id) {
 	int status;
 	struct keyboard_data* device_data = NULL;
 
@@ -362,11 +320,12 @@ static int device_probe(struct hid_device* dev, const struct hid_device_id* id) 
 	u8 inum = interface->cur_altsetting->desc.bInterfaceNumber;
 
 	// Prepare our data for the private sector
-	// device_data = kzalloc(sizeof(struct keyboard_data), GFP_KERNEL);
-	// hid_set_drvdata(dev, device_data);
+	device_data = kzalloc(sizeof(struct keyboard_data), GFP_KERNEL);
+	hid_set_drvdata(dev, device_data);
 
 	// Attempt to start communication with the device
-	status = hid_parse(dev);		// I think this populates dev->X where X is necessary for hid_hw_start()
+	// (I think this populates some dev->X where X is necessary for hid_hw_start() )
+	status = hid_parse(dev);
 	if (status) goto probe_fail;
 
 	status = hid_hw_start(dev, HID_CONNECT_DEFAULT);
@@ -387,19 +346,19 @@ static int device_probe(struct hid_device* dev, const struct hid_device_id* id) 
 		if (!status) log_report(&out);
 	}
 
+	return 0;
+
 	probe_fail:
 	if (device_data) kfree(device_data);
 	printk(KERN_WARNING "Failed to start HID device: Razer Tartarus");
-		return status;
-
-	return 0;
+	return status;
 }
 
 // DEVICE DISCONNECT
 // Clean up memory for private device data
-static void device_disconnect(struct hid_device* dev) {
+static void device_disconnect (struct hid_device* dev) {
 	// Get the device data
-	struct razer_data* device_data = hid_get_drvdata(dev);
+	struct keyboard_data* device_data = hid_get_drvdata(dev);
 
 	// Stop the device 
 	hid_hw_stop(dev);
@@ -409,10 +368,314 @@ static void device_disconnect(struct hid_device* dev) {
 	printk(KERN_INFO "HID Driver Unbound (Tartarus)\n");
 }
 
+// Some notes for developement:
+//
+//	The device seems to keep track of the order that the keys are
+//	pressed which seems to be reflected in the event
+//
+//	Because of this, the trivial solution would be to simply
+//	iterate the new report and check it against our existing
+//	keylist (probably saved to the private sector)
+//
+//	If this is assumed and then the report is out of order,
+//	all subsequent buttons would be registered as "unpressed"
+// 	However, we should expect at most one key change per report,
+//	so we could either detect this or make it our stopping condition
+//
+//	The current implementation will assume that this ordering is
+//	guaranteed, as I can't reason why an HID event would be built
+//	to provide reports in this way from the hardware side if not
+//	for enabling optimal efficiency in polling inputs
+//
+//	If this proves problematic, I will seek to change this
+//
+//	TODO: Reference kernel implementation of event parsing
+// ---
+
+// Helper functions for event handling
+void log_event (u8*, int);
+int gen_keylist (u8*, int, u8*);
+u8 key_action (struct keyboard_data*, int*, u8*, int);
+u8 modkey_action (struct keyboard_data*, int*, u8);
+int key_index (u8);
+// handle errors?
+// process keymap action (process input)
+
 // DEVICE RAW EVENT
 // Called upon any keypress/release
 // (EV_KEY and available keys must be set in .input_configured)
-static int event_handler (struct hid_device *hdev, struct hid_report *report, u8 *data, int size) {
-	printk(KERN_INFO "Raw event handler called\n");
+// TODO DIFFERENT VERSIONS FOR KEYBOARD AND MOUSE VERSIONS
+static int event_handler (struct hid_device* dev, struct hid_report* report, u8* data, int size) {
+	u8 keylist[KEYLIST_LEN];
+	int count;
+
+	u8 key;
+	int state;
+
+	struct keyboard_data* device_data = hid_get_drvdata(dev);
+
+	log_event(data, size);
+	count = gen_keylist(data, size, keylist);
+	if (count < 0) return -1;
+
+	// Determine new button reported in the event (and its state)
+	if (!(key = key_action(device_data, &state, keylist, count))) {
+		// Event with no keylist change is a modkey
+		key = modkey_action(device_data, &state, *data);
+	}
+
+	printk(KERN_INFO "Key Press:  key: 0x%02x (index: %d)  state: 0x%02x\n\n", key, key_index(key), state);
+
+	// Send mapped input
+	// todo
+
 	return 0;
+}
+
+// Log the output of a raw event for debugging
+void log_event (u8* data, int size) {
+	int i;
+	int j;
+	unsigned mask = 0x80;
+
+	char* bits_str = (char*) kzalloc(9 * sizeof(char), GFP_KERNEL);
+	char* data_str = (char*) kzalloc((10 * size + 1) * sizeof(char), GFP_KERNEL);
+
+	if (!bits_str || !data_str) return;
+
+	for (i = 0; i < size; i++) {
+		for (j = 0; j < 8; j++)
+			snprintf(bits_str + j, 2, "%u", !!(data[i] & (mask >> j)));
+		snprintf(data_str + (i * 10), 11, "%s%s", bits_str, /*((i + 1) % 8) ? "  " : " \n"*/ "  ");
+	}
+
+	printk(KERN_INFO "RAW EVENT:  size: %d  data:\n\t%s\n", size, data_str);
+
+	kfree(bits_str);
+	kfree(data_str);
+}
+
+// Pull the raw keycodes from the event data
+// 		data -> Raw event data
+//		size -> Raw event size
+//		keylist -> pointer to pre-allocated list
+// Returns length of new list (will likely never exceed 6)
+int gen_keylist (u8* data, int size, u8* keylist) {
+	int i = 2;				// Iterator value (all standard keys reported from bytes 3 to 8)
+	int count = 0;	 		// Number of keys reported in event
+	u8 key;					// Current key at index
+
+	if (!keylist) return -1;
+
+	for ( ; i < size; i++) {
+		if (!(key = data[i])) continue;
+		keylist[count++] = key;
+	}
+
+	return count;
+}
+
+// Compare the new keylist with the old keylist (in the private sector)
+// The private sector is then updated accordingly
+// Returns the new keycode and sets the value of state to the value of the key
+//	^^Preparation for registering actual device input to the system
+//		dev -> HID device
+//		state -> Pointer to int for secondary return
+//		keylist -> New keylist parsed from the event
+//		count -> Number of entries in the keylist
+//
+// TODO: If a discrepancy is found between the keylist lengths (more than one apart)
+//		 Handle the situation by carefully looping through the data
+u8 key_action (struct keyboard_data* data, int* state, u8* keylist, int count) {
+	// struct keyboard_data* data = hid_get_drvdata(dev);
+
+	int count_prev = data->keycount;
+	u8* keylist_prev = data->keylist;
+
+	int i = 0;			// Iterator val
+	// int p = 0;		// Index placeholder for keylist_prev
+	// int k = 0;		// Index placeholder for keylist (the one we are processing)
+	u8 key = 0;
+
+	// Ensure memory safety
+	if (count > KEYLIST_LEN || count_prev > KEYLIST_LEN) return 0;
+
+	switch (count - count_prev) {
+	case 0:
+		// No differences in pressed keys
+		// (Likely more than 6 keys were pressed and our event does not support it)
+		// 		^^potentially worth looking into in the future
+		return 0;
+
+	case -1:
+		// A key was released
+		*state = 0;
+
+		// Iterate until the first unmatched key is found
+		for ( ; i < count_prev; i++)
+			if ((key = keylist_prev[i]) != keylist[i]) break;
+
+		// If no key was found, take no action
+		if (i == count_prev) return 0;
+
+		// Remove found key from private data
+		for ( ; i < count; i++)
+			keylist_prev[i] = keylist_prev[i + 1];
+
+		data->keycount = count;
+		return key;
+
+		// Return avoids an extra if-statement
+		// return !!(i - (KEYLIST_LEN)) * key;
+		
+	case 1:
+		// A key was pressed
+		*state = 1;
+
+		// Jump to new index
+		key = keylist[count_prev];
+
+		// Ensure key is not already in array
+		// (Not the most efficient, but I am unsure of our ordering yet)
+		// TODO: If our order is guaranteed, remove this section
+		for ( ; i < count_prev; i++)
+			if (keylist_prev[i] == key) return 0;
+
+		keylist_prev[count_prev] = key;
+		data->keycount = count;
+		return key;
+	
+	default:
+		// todo handle discrepancy
+		// basically if weird shit happens and stuff is out of order...
+		printk(KERN_WARNING "Razer Tartarus: Something wack-ass happened\n");
+		return 0;
+	}
+}
+
+u8 modkey_action (struct keyboard_data* data, int* state, u8 modkey) {
+	u8 modkey_prev = data->modkey;
+	u8 parsed = 0;		// Output key
+
+	// Example:
+	//      0000 0100	(alt held)
+	// XOR  0000 0110	(shift pressed)
+	//	   -----------
+	//      0000 0010	(shift)
+
+	switch (modkey_prev ^ modkey) {
+	case MODKEY_SHIFT:
+		parsed = MODKEY_MASK | MODKEY_SHIFT;
+		*state = (modkey & MODKEY_SHIFT) ? 1 : 0;
+		break;
+
+	case MODKEY_ALT:
+		parsed = MODKEY_MASK | MODKEY_ALT;
+		*state = (modkey & MODKEY_ALT) ? 1 : 0;
+		break;
+
+	default:
+		// Something weird happened (handle error by resetting modkeys)
+		data->modkey = 0;
+		return 0;
+	}
+
+	data->modkey = modkey;
+	return parsed;
+}
+
+// Directly maps each device key to an array index (to save on memory)
+// 2^8 indexes unmapped would require 256 entries of our keymap struct
+// I'd swear there's a more practical way to write this, but I can't determine what that would be
+int key_index (u8 key) {
+	u8 ret = 0;
+
+	switch (key) {
+	// Keys 01 - 05
+	case 0x1E:
+		ret = 1;
+		break;
+	case 0x1F: 
+		ret = 2;
+		break;
+	case 0x20:
+		ret = 3;
+		break;
+	case 0x21:
+		ret = 4;
+		break;
+	case 0x22:
+		ret = 5;
+		break;
+
+	// Keys 06 - 10
+	case 0x2B:
+		ret = 6;
+		break;
+	case 0x14:
+		ret = 7;
+		break;
+	case 0x1A:
+		ret = 8;
+		break;
+	case 0x08:
+		ret = 9;
+		break;
+	case 0x15:
+		ret = 10;
+		break;
+
+	// Keys 11 - 15
+	case 0x39:
+		ret = 11;
+		break;
+	case 0x04:
+		ret = 12;
+		break;
+	case 0x16:
+		ret = 13;
+		break;
+	case 0x07:
+		ret = 14;
+		break;
+	case 0x09:
+		ret = 15;
+		break;
+
+	// Keys 16 - 20
+	case 0x82:
+		ret = 16;
+		break;
+	case 0x1D:
+		ret = 17;
+		break;
+	case 0x1B:
+		ret = 18;
+		break;
+	case 0x06:
+		ret = 19;
+		break;
+	case 0x2C:
+		ret = 20;
+		break;
+
+	// Unnamed circle, arrow key stick (l, u, r, d)
+	case 0x84:
+		ret = 21;
+		break;
+	case 0x50:
+		ret = 22;
+		break;
+	case 0x52:
+		ret = 23;
+		break;
+	case 0x4F:
+		ret = 24;
+		break;
+	case 0x51:
+		ret = 25;
+		break;
+	}
+
+	return ret;
 }
