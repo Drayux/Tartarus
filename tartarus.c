@@ -4,6 +4,8 @@
 #include <linux/hid.h>
 #include <linux/string.h>   // For use with memset and memcpy
 
+#include "default_map.h"
+
 // -- DRIVER METADATA --
 MODULE_AUTHOR("Drayux");
 MODULE_DESCRIPTION("Tartarus V2 Driver");
@@ -20,6 +22,7 @@ MODULE_LICENSE("GPL");
 #define WAIT_MAX    	800         // ^^Maximum is 800 us (0.8 ms)
 
 #define KEYLIST_LEN		8			// Maximum number of entries in the list of keys reported by the device
+#define	KEYMAP_LEN		26			// Number of unique keys supported by the device
 
 #define MODKEY_MASK		0x80		// Applied to all modkey keycodes (i.e. 0000 0010 (lshift) -> 1000 0010)
 #define MODKEY_SHIFT	0x02		// Bit pattern for the shift key (key 16)
@@ -66,20 +69,35 @@ module_hid_driver(tartarus_driver);
 
 
 // -- STRUCTS --
-// TODO struct for keymap
+// STRUCT KEYMAP CURRENTLY INSIDE default_map.h
+// Move it back when profiles are working!
+struct keymap;
 
-// Struct for device private sector
-//  ^^Specifically for keyboard device (inum 0x00)
+// Private sector for keyboard HID (inum 0x00)
 // TODO DEVICE PROFILES (probably going to reset keymap/keymap_hypershift with a load function?)
-// TODO private sector for mouse device
 struct keyboard_data {
+	// Input device
+	struct input_dev* input;
+
+	// For parsing events
 	int keycount;
 	u8 keylist[KEYLIST_LEN];
 	u8 modkey;
-	// int32_t hypershift;
-	// unsigned keymap[USAGE_IDX];
-	// unsigned keymap_hypershift[USAGE_IDX];
+
+	// Input handling data
+	char hypershift;
+
+	// Device profile
+	// struct keymap map[KEYMAP_LEN];
+	// struct keymap map_hs[KEYMAP_LEN];
+
+	struct keymap* map;
+	struct keymap* map_hs;
+
+	// TODO array of macros
 };
+
+// TODO private sector for mouse device
 
 // Format of the 90 byte device response
 // (Taken from OpenRazer)
@@ -296,10 +314,24 @@ static struct razer_report send_command (struct hid_device* dev, struct razer_re
 // ~Called before probe~
 // Specify device input parameters (input_dev event types, available keys, etc.)
 static int input_config (struct hid_device* dev, struct hid_input* input) {
+	struct keyboard_data* device_data = NULL;
 	struct input_dev* input_dev = input->input;
 
+	// Prepare our data for the private sector
+	device_data = kzalloc(sizeof(struct keyboard_data), GFP_KERNEL);
+	if (!device_data) return -ENOMEM;
+	hid_set_drvdata(dev, device_data);
+
+	device_data->input = input_dev;		// Thanks https://github.com/nirenjan/libx52/blob/482c5980abd865106a418853783692346e19ebb6/kernel_module/hid-saitek-x52.c#L124
+	// device_data->keycount = 0;
+	// device_data->hypershift = 0;
+	device_data->map = default_map;		// DEBUG (pending completion of profiles)
+
+	// Specify our input conditions
 	set_bit(EV_KEY, input_dev->evbit);
 	for (int i = 0; i < 25; i++) set_bit(KEY_MACRO1 + i, input_dev->keybit);
+
+	set_bit(KEY_A, input_dev->evbit);
 
 	return 0;
 }
@@ -309,7 +341,7 @@ static int input_config (struct hid_device* dev, struct hid_input* input) {
 // Debug: Send sample URB for keyboard layout
 static int device_probe (struct hid_device* dev, const struct hid_device_id* id) {
 	int status;
-	struct keyboard_data* device_data = NULL;
+	struct keyboard_data* device_data = hid_get_drvdata(dev);
 
 	struct razer_report cmd;
 	struct razer_report out;
@@ -318,10 +350,6 @@ static int device_probe (struct hid_device* dev, const struct hid_device_id* id)
 	struct usb_device* device = interface_to_usbdev(interface);
 
 	u8 inum = interface->cur_altsetting->desc.bInterfaceNumber;
-
-	// Prepare our data for the private sector
-	device_data = kzalloc(sizeof(struct keyboard_data), GFP_KERNEL);
-	hid_set_drvdata(dev, device_data);
 
 	// Attempt to start communication with the device
 	// (I think this populates some dev->X where X is necessary for hid_hw_start() )
@@ -397,9 +425,10 @@ void log_event (u8*, int);
 int gen_keylist (u8*, int, u8*);
 u8 key_action (struct keyboard_data*, int*, u8*, int);
 u8 modkey_action (struct keyboard_data*, int*, u8);
-int key_index (u8);
 // handle errors?
-// process keymap action (process input)
+int key_index (u8);
+void process_input (struct input_dev*, int, int, struct keymap*);
+
 
 // DEVICE RAW EVENT
 // Called upon any keypress/release
@@ -411,23 +440,30 @@ static int event_handler (struct hid_device* dev, struct hid_report* report, u8*
 
 	u8 key;
 	int state;
+	struct keyboard_data* device_data;
 
-	struct keyboard_data* device_data = hid_get_drvdata(dev);
+	int index;
+	struct keymap* map;
 
-	log_event(data, size);
+	// todo something something switch for interface num
+
+	device_data = hid_get_drvdata(dev);
+
+	// log_event(data, size);	// DEBUG
 	count = gen_keylist(data, size, keylist);
 	if (count < 0) return -1;
 
 	// Determine new button reported in the event (and its state)
-	if (!(key = key_action(device_data, &state, keylist, count))) {
-		// Event with no keylist change is a modkey
-		key = modkey_action(device_data, &state, *data);
-	}
+	key = key_action(device_data, &state, keylist, count);
+	if (!key) key = modkey_action(device_data, &state, *data);		// No key means modifier
+	index = key_index(key);
 
-	printk(KERN_INFO "Key Press:  key: 0x%02x (index: %d)  state: 0x%02x\n\n", key, key_index(key), state);
+	printk(KERN_INFO "Key Press:  key: 0x%02x (index: %d)  state: 0x%02x\n", key, index, state);
 
 	// Send mapped input
-	// todo
+	map = (device_data->hypershift)	? device_data->map_hs : device_data->map;
+	// input = to_input_dev(dev->dev.parent);
+	process_input(device_data->input, index, state, map);
 
 	return 0;
 }
@@ -585,7 +621,7 @@ u8 modkey_action (struct keyboard_data* data, int* state, u8 modkey) {
 }
 
 // Directly maps each device key to an array index (to save on memory)
-// 2^8 indexes unmapped would require 256 entries of our keymap struct
+// 2^8 indexes unmapped would require 256 entries of our keymap struct (*2 for hypershift)
 // I'd swear there's a more practical way to write this, but I can't determine what that would be
 int key_index (u8 key) {
 	u8 ret = 0;
@@ -678,4 +714,33 @@ int key_index (u8 key) {
 	}
 
 	return ret;
+}
+
+// Accesses the keymap and performs the specified input
+// map should be the standard or hypershift keymap respectively
+void process_input (struct input_dev* input, int index, int state, struct keymap* map) {
+	struct keymap action;
+
+	if (!map || index >= KEYMAP_LEN) return;
+
+	action = map[index];
+	switch (action.type) {
+	case CTRL_KEYMAP:
+		printk(KERN_INFO "process_input()  data: 0x%02x  state: 0x%02x\n", action.data, state);
+		input_report_key(input, 0x1E, state);
+		break;
+
+	case CTRL_HYPERSHIFT:
+		break;
+
+	case CTRL_MACRO:
+		break;
+
+	case CTRL_PROFILE:
+		break;
+
+	default:
+		// Take no action (CTRL_NOP jumps here)
+		return;
+	}
 }
