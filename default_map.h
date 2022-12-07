@@ -141,4 +141,34 @@ static struct keymap default_map [26] = {
 		.type = 0x01,
 		.data = 0x39
 	},
+
+	// 21 (Circle)
+	{
+		.type = 0x02,
+		.data = 0x00
+	},
+
+	// 22 (Left)
+	{
+		.type = 0x01,
+		.data = 0x4B
+	},
+
+	// 23 (Up)
+	{
+		.type = 0x01,
+		.data = 0x48
+	},
+
+	// 24 (Right)
+	{
+		.type = 0x01,
+		.data = 0x4D
+	},
+
+	// 25 (Down)
+	{
+		.type = 0x01,
+		.data = 0x50
+	}
 };

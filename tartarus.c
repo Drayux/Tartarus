@@ -100,7 +100,7 @@ struct keyboard_data {
 // TODO private sector for mouse device
 
 // Format of the 90 byte device response
-// (Taken from OpenRazer)
+// (From OpenRazer)
 struct razer_report {
 	// Response status
 	//  0x00 - New Command
@@ -217,7 +217,7 @@ void log_report (struct razer_report* report) {
 
 // Create a razer report data type
 // Specifically for use in requesting data from the device
-// (Core operation taken from OpenRazer)
+// (Modified from OpenRazer)
 struct razer_report generate_report (unsigned char class, unsigned char id, unsigned char size) {
 	struct razer_report report = { 0 };
 	// Static values
@@ -250,7 +250,7 @@ unsigned char razer_checksum (struct razer_report* report) {
 // Returns the device response
 // Use req (aka the request report) to specify the command to send
 // cmd_errno can be NULL (but shouldn't be)
-// (Logic from OpenRazer)
+// (Modified from OpenRazer)
 static struct razer_report send_command (struct hid_device* dev, struct razer_report* req, int* cmd_errno) {
 	char* request;      // razer_report containing the command parameters (i.e. get layout/set lighting pattern/etc)
 	int received = -1;  // Amount of data transferred (result of usb_control_msg)
@@ -311,37 +311,38 @@ static struct razer_report send_command (struct hid_device* dev, struct razer_re
 
 
 // DEVICE INPUT CONFIGURATION
-// ~Called before probe~
+// ~Called after probe~
 // Specify device input parameters (input_dev event types, available keys, etc.)
 static int input_config (struct hid_device* dev, struct hid_input* input) {
 	struct keyboard_data* device_data = NULL;
 	struct input_dev* input_dev = input->input;
 
-	// Prepare our data for the private sector
+	// This is where interface-specific memory allocation would be specified
+
+	// Specify device-specific data (private sector)
 	device_data = kzalloc(sizeof(struct keyboard_data), GFP_KERNEL);
 	if (!device_data) return -ENOMEM;
 	hid_set_drvdata(dev, device_data);
 
 	device_data->input = input_dev;		// Thanks https://github.com/nirenjan/libx52/blob/482c5980abd865106a418853783692346e19ebb6/kernel_module/hid-saitek-x52.c#L124
-	// device_data->keycount = 0;
-	// device_data->hypershift = 0;
 	device_data->map = default_map;		// DEBUG (pending completion of profiles)
 
 	// Specify our input conditions
 	set_bit(EV_KEY, input_dev->evbit);
-	for (int i = 0; i < 25; i++) set_bit(KEY_MACRO1 + i, input_dev->keybit);
 
-	set_bit(KEY_A, input_dev->evbit);
+	// https://elixir.bootlin.com/linux/latest/source/include/uapi/linux/input-event-codes.h#L65
+	// TODO determine better way to do this
+	for (int i = 1; i <= 127; i++) set_bit(i, input_dev->keybit);
+	for (int i = 183; i <= 194; i++) set_bit(i, input_dev->keybit);
 
 	return 0;
 }
 
 // DEVICE PROBE
-// Set up private device data
 // Debug: Send sample URB for keyboard layout
 static int device_probe (struct hid_device* dev, const struct hid_device_id* id) {
 	int status;
-	struct keyboard_data* device_data = hid_get_drvdata(dev);
+	// struct keyboard_data* device_data = hid_get_drvdata(dev);
 
 	struct razer_report cmd;
 	struct razer_report out;
@@ -377,8 +378,8 @@ static int device_probe (struct hid_device* dev, const struct hid_device_id* id)
 	return 0;
 
 	probe_fail:
-	if (device_data) kfree(device_data);
-	printk(KERN_WARNING "Failed to start HID device: Razer Tartarus");
+	// if (device_data) kfree(device_data);	// Potential refactor, I don't think this will ever be called
+	printk(KERN_WARNING "Failed to start HID device: Razer Tartarus\n");
 	return status;
 }
 
@@ -418,6 +419,7 @@ static void device_disconnect (struct hid_device* dev) {
 //	If this proves problematic, I will seek to change this
 //
 //	TODO: Reference kernel implementation of event parsing
+//        https://elixir.bootlin.com/linux/v6.0.11/source/drivers/hid/usbhid/usbkbd.c#L117
 // ---
 
 // Helper functions for event handling
@@ -445,7 +447,7 @@ static int event_handler (struct hid_device* dev, struct hid_report* report, u8*
 	int index;
 	struct keymap* map;
 
-	// todo something something switch for interface num
+	// TODO something something switch for interface num (move following code to "keyboard action")
 
 	device_data = hid_get_drvdata(dev);
 
@@ -458,11 +460,11 @@ static int event_handler (struct hid_device* dev, struct hid_report* report, u8*
 	if (!key) key = modkey_action(device_data, &state, *data);		// No key means modifier
 	index = key_index(key);
 
-	printk(KERN_INFO "Key Press:  key: 0x%02x (index: %d)  state: 0x%02x\n", key, index, state);
+	// printk(KERN_INFO "Key Press:  key: 0x%02x (index: %d)  state: 0x%02x\n", key, index, state);
 
 	// Send mapped input
-	map = (device_data->hypershift)	? device_data->map_hs : device_data->map;
 	// input = to_input_dev(dev->dev.parent);
+	map = (device_data->hypershift)	? device_data->map_hs : device_data->map;
 	process_input(device_data->input, index, state, map);
 
 	return 0;
@@ -726,8 +728,7 @@ void process_input (struct input_dev* input, int index, int state, struct keymap
 	action = map[index];
 	switch (action.type) {
 	case CTRL_KEYMAP:
-		printk(KERN_INFO "process_input()  data: 0x%02x  state: 0x%02x\n", action.data, state);
-		input_report_key(input, 0x1E, state);
+		input_report_key(input, action.data, state);
 		break;
 
 	case CTRL_HYPERSHIFT:
