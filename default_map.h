@@ -11,13 +11,16 @@ Eventually this will be replaced by config files within a profile system
 	HYPERSHIFT	->	data is 0 (swaps to hypershift map)
 	MACRO		->	data is index inside macro array (array of pointers to macro types)
 	PROFILE		->	data is (probably) index of profile (all files in the same dir, profile1.rz, profile2.rz, ...)
-/*/
-struct keymap {
-	u8 type;		// Event type
-	u8 data;		// Respective data
-};
 
-static struct keymap default_map [26] = {
+	***MOUSE		->	data is mouse action (???)
+
+/*/
+// struct keymap {
+// 	u8 type;		// Event type
+// 	u8 data;		// Respective data
+// };
+
+static struct keymap default_map [KEYMAP_LEN] = {
 	{
 		.type = 0x00
 	},

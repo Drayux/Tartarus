@@ -10,6 +10,7 @@ Digging into the source, I've seen that the driver does a vast majority of exact
   
 Other references of interest:  
 ![hid-tmff2 (Thrustmaster Wheel HID Driver)](https://github.com/Kimplul/hid-tmff2)  
+![hid-saitek_x52](https://github.com/nirenjan/libx52/blob/482c5980abd865106a418853783692346e19ebb6/kernel_module/hid-saitek-x52.c#L124)  
 ![Linux Kernel](https://github.com/torvalds/linux)  
 
 ### About

@@ -1,4 +1,4 @@
-obj-m := tartarus.o
+obj-m := hid-tartarus_v2.o
 
 KERNELDIR := /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)
