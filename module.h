@@ -48,7 +48,7 @@ struct drvdata {
 
 	u8 profile;					// Current profile in use
 	u8 inum;					// Interface number : 0 -> KB, 1 -> RGB???, 2 -> Mouse (wheel)
-	void* idata;				// Interface data (currently unused)
+	void* idata;				// Interface data (keyboard, mouse, etc.)
 };
 
 // Driver data for keyboard interface
@@ -61,39 +61,6 @@ struct kbddata {
 		u32 comp[8];
 	} state;
 };
-
-/*/ OLD INTERFACE DATA STRUCTS
-// Private data for keyboard interface (inum 0x00)
-//	^^To be stored at drvdata.data
-struct keyboard_data {
-	// For parsing events
-	int keycount;
-	u8 keylist[KEYLIST_LEN];
-	u8 modkey;
-
-	// Input handling data
-	char hypershift;
-
-	// Device profile
-	struct bind* map;
-	struct bind* map_hs;
-
-	// TODO PROFILES
-	// For implementation:
-	// Device data contains array of keymap pointers (size 2 * 8?)
-	// Each pair denotes normal/hs for a given profile
-	// A profile swap action replaces map and map_hs with the respective profiles
-	// Consider: Reset hypershift state to 0 on profile swap
-
-	// TODO MACROS
-	// For implementation:
-	// Similar to profiles, use array of pointers
-};
-
-// Private sector for mouse HID (inum 0x02)
-struct mouse_data {
-	int debug;		// Just a value so there's something there
-};  //*/
 
 // Format of the 90 byte device response
 // (Taken from OpenRazer driver)

@@ -87,12 +87,12 @@ static int input_config(struct hid_device* dev, struct hid_input* input) {
 	case 0:
 		// Keyboard
 		set_bit(EV_KEY, input_dev->evbit);
+		set_bit(1, input_dev->keybit);		// I still don't understand this
 
 		// https://elixir.bootlin.com/linux/v6.7/source/include/uapi/linux/input-event-codes.h#L65
 		// TODO: Are these keys that trigger events or possible outputs?
-		for (int i = 1; i <= 127; i++) set_bit(i, input_dev->keybit);
-		for (int i = 183; i <= 194; i++) set_bit(i, input_dev->keybit);
-
+		// for (int i = 1; i <= 127; i++) set_bit(i, input_dev->keybit);
+		// for (int i = 183; i <= 194; i++) set_bit(i, input_dev->keybit);
 		
 		break;
 	
@@ -206,8 +206,8 @@ void log_event(u8* data, int len_data, u8 inum) {
 	int j;
 	unsigned mask = 0x80;
 
-	char* bits_str = (char*) kzalloc(9 * sizeof(char), GFP_KERNEL);
-	char* data_str = (char*) kzalloc((10 * len_data + 1) * sizeof(char), GFP_KERNEL);
+	char* bits_str = kzalloc(9 * sizeof(char), GFP_KERNEL);
+	char* data_str = kzalloc((10 * len_data + 1) * sizeof(char), GFP_KERNEL);
 
 	// I'm kinda cheating but this won't go into the "production build" of the module
 	if (!bits_str || !data_str) {
