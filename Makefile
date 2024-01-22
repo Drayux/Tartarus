@@ -1,4 +1,4 @@
-obj-m := hid-tartarus_v2.o
+obj-m := tartarus.o
 
 KERNELDIR := /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)
@@ -11,4 +11,4 @@ all:
 .PHONY: clean
 clean:
 	@echo Cleaning directory
-	rm -rm *.cmd *.o *.ko Module.symvers modules.order
+	rm -f .[!.]*.cmd .[!.]*.o .[!.]*.ko .[!.]*.d *.mod* .[!.]Module.symvers modules.order
