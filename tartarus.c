@@ -1,82 +1,108 @@
-#include <linux/string.h>   // For use with memset and memcpy
-#include <linux/usb.h>      // Types necessary for URB communication
+#include <linux/string.h>   // memset() and memcpy()
+#include <linux/usb.h>      // URB types
 
 #include "module.h"			// Module and device defines
-
+#include "keymap.h"			// TEMPORARY HARD-CODED PROFILE
 
 // -- DEVICE EVENTS --
 // Probe called upon device detection (initalization step)
-// Debug: Send sample URB for keyboard layout
 static int device_probe(struct hid_device* dev, const struct hid_device_id* id) {
 	int status;
 
 	struct usb_interface* intf = to_usb_interface(dev->dev.parent);
-	struct usb_device* usb = interface_to_usbdev(intf);
+	// struct usb_device* usb = interface_to_usbdev(intf);		// Used only for debug output
 	u8 inum = intf->cur_altsetting->desc.bInterfaceNumber;
 
 	struct drvdata* data = NULL;
 	struct kbddata* kdata = NULL;
 	// struct mousedata* mdata = NULL;
+	void* idata = NULL;
 
-	// void* idata = NULL;
-	// struct kbddata* kbd_data;
-	// struct mouse_data* ms_data;
-	struct razer_report cmd;		// (debugging)
-	struct razer_report out;		// (debugging)
+	// struct razer_report cmd;		// (debugging)
+	// struct razer_report out;		// (debugging)
+	// printk(KERN_INFO "Attempting to initalize Tartarus HID driver (0x%02x)\n", inum);	// (debugging)
 
-	// Allocate driver data
-	data = kzalloc(sizeof(struct drvdata), GFP_KERNEL);
-	if (!data) return -ENOMEM;
-
-	data->inum = inum;
-
+	// Initalize driver data
 	switch (inum) {
+	case 1:
+		// TODO: Not sure what this interface is used for
+		//     ^^Just save the inum and exit
+		data = kzalloc(sizeof(struct drvdata), GFP_KERNEL);
+		if ((status = data ? 0 : -ENOMEM)) goto probe_fail;
+		
+		data->inum = inum;
+		hid_set_drvdata(dev, data);
+		
+		return 0;
+		
 	case 0:
 		// Keyboard
-		kdata = kzalloc(sizeof(struct kbddata), GFP_KERNEL);
-		if ((status = kdata ? 0 : -ENOMEM)) goto probe_fail;
+		idata = kzalloc(sizeof(struct kbddata), GFP_KERNEL);
+		if ((status = idata ? 0 : -ENOMEM)) goto probe_fail;
 
-		data->idata = kdata;
-
-		// Send a dummy device command (debugging) 
+		/*/ Send a dummy device command (debugging) 
 		cmd = init_report(CMD_KBD_LAYOUT);
-		out = send_command(dev, &cmd, &status);
+		out = send_command(dev->dev.parent, &cmd, &status);
 		if (!status) log_report(&out);
 		//*/
-		
-		break;
 
-	case 2: break;		// "Mouse"
+		// Manually set keymap (debugging)
+		kdata = idata;		// TODO: Remove this if we do not need to set kb-specific fields
+		memcpy(kdata->maps[0].keymap, default_keymap, sizeof(struct profile));
+		//*/
+		
+		// Create device files
+		// TODO: Needs proper error handling (currently will leak idata)
+		if(device_create_file(&dev->dev, &dev_attr_profile_num)) return -1;
+		if(device_create_file(&dev->dev, &dev_attr_profile)) return -1;
+
+		break;
+		
+	case 2:
+		// "Mouse"
+		idata = kzalloc(sizeof(struct mousedata), GFP_KERNEL);
+		if ((status = idata ? 0 : -ENOMEM)) goto probe_fail;
+
+		// mdata = idata;
+		
+		// if(device_create_file(&dev->dev, &dev_attr_profile_num)) return -1;
+		// if(device_create_file(&dev->dev, &dev_attr_profile)) return -1;
+		break;
 	}
 
-	// Begin device communication
-	// NOTE: Driver data must be set before hid_hw_start()
+	data = kzalloc(sizeof(struct drvdata), GFP_KERNEL);
+	if ((status = data ? 0 : -ENOMEM)) goto probe_fail;
+
+	mutex_init(&data->lock);
+	data->inum = inum;
+	data->idata = idata;
+	data->profile = 1;		// (DEBUGGING)
 	hid_set_drvdata(dev, data);
-	status = hid_parse(dev);
-	if (status) goto probe_fail;
-	status = hid_hw_start(dev, HID_CONNECT_DEFAULT);
-	if (status) goto probe_fail;
+
+	// Begin device communication
+	// NOTE: Device must be fully prepared before hid_hw_start() (including dev_drvdata)
+	if ((status = hid_parse(dev))) goto probe_fail;
+	if ((status = hid_hw_start(dev, HID_CONNECT_DEFAULT))) goto probe_fail;
 
 	// Log success to kernel
 	printk(KERN_INFO "HID Driver Bound:  Vendor ID: 0x%02x  Product ID: 0x%02x  Interface Num: 0x%02x\n", id->vendor, id->product, inum);
-	printk(KERN_INFO "HID Device Info:  devnum: %d  devpath: %s\n", usb->devnum, usb->devpath);	// (debugging)
+	// printk(KERN_INFO "HID Device Info:  devnum: %d  devpath: %s\n", usb->devnum, usb->devpath);	// (debugging)
 
 	return 0;
 
-	probe_fail:
+probe_fail:
+	if (idata) kfree(idata);
 	if (data) kfree(data);
-	printk(KERN_WARNING "Failed to start HID device: Razer Tartarus v2\n");
+	printk(KERN_WARNING "Failed to start HID driver: Razer Tartarus v2 (0x%02x)\n", inum);
 	return status;
 }
 
 // Define device input parameters (input_dev event types, available keys, etc.)
-// NOTE: Called by kernel after device probe
+// NOTE: Called by kernel during hid_hw_start() (insde device probe)
 static int input_config(struct hid_device* dev, struct hid_input* input) {
 	struct input_dev* input_dev = input->input;
 	struct drvdata* dev_data = hid_get_drvdata(dev);
 	if (!dev_data) return -1;	// TODO: We might want to use a different errno
-
-	printk(KERN_INFO "Input device: %p\t(inum %d)\n", input_dev, dev_data->inum);
 
 	// Save our input device for later use (can be cast but this is easier)
 	// Thanks: https://github.com/nirenjan/libx52/blob/482c5980abd865106a418853783692346e19ebb6/kernel_module/hid-saitek-x52.c#L124
@@ -99,7 +125,6 @@ static int input_config(struct hid_device* dev, struct hid_input* input) {
 	case 2:
 		// "Mouse"
 		set_bit(EV_REL, input_dev->evbit);
-
 		set_bit(BTN_MIDDLE, input_dev->keybit);
 		set_bit(BTN_WHEEL, input_dev->keybit);
 
@@ -118,17 +143,31 @@ static void device_disconnect(struct hid_device* dev) {
 	struct drvdata* data = hid_get_drvdata(dev);
 	void* idata;
 
+	// No device data, something probably went wrong
+	if (!data) return;
+
+	switch (data->inum) {
+	case 1:
+		// Mysterious interface
+		kfree(data);
+		return;
+	case 0:
+		// Keyboard
+		device_remove_file(&dev->dev, &dev_attr_profile_num);
+		device_remove_file(&dev->dev, &dev_attr_profile);
+		break;
+	case 2:
+		// Mouse
+		// device_remove_file(&dev->dev, &dev_attr_profile);
+		break;
+	}
+
 	// Stop the device 
 	hid_hw_stop(dev);
 
 	// Cleanup
-	if (data) {
-
-		// TODO: Eventually I will also need to clean device profiles/macros
-
-		if ((idata = data->idata)) kfree(idata);
-		kfree(data);
-	}
+	if ((idata = data->idata)) kfree(idata);
+	kfree(data);
 
 	printk(KERN_INFO "HID Driver Unbound (Razer Tartarus v2)\n");
 }
@@ -143,7 +182,7 @@ static int handle_event(struct hid_device* dev, struct hid_report* report, u8* e
 
 		Because of this, the trivial solution would be to simply
 		iterate the new report and check it against our existing
-		keylist (probably saved to the private sector)
+		keylist
 
 		If this is assumed and then the report is out of order,
 		all subsequent buttons would be registered as "unpressed"
@@ -165,20 +204,24 @@ static int handle_event(struct hid_device* dev, struct hid_report* report, u8* e
 	struct bind action = { 0 };
 	int state = -1;
 
-	// log_event(event, len, (data) ? data->inum : 0xFF);		// (debugging)
+	// log_event(event, len, (data) ? data->inum : 0xFF); 	// (DEBUGGING)
 
 	if (!data) return -1;				// TODO: Different errno may be desirable
+	if (!data->profile) return 0;		// Device "disabled" take no action
+
+	// TODO: Lock the mutex here!
 	switch (data->inum) {
 	case 0:
-		action = key_event(data->idata, &state, event, len);
+		action = key_event(data->idata, data->profile - 1, &state, event, len);
+		printk(KERN_INFO "Action type: 0x%02x ; Action data: 0x%02x ; State: %d\n", action.type, action.data, state);
 		break;
 
 	case 2:
 		printk(KERN_INFO "Mouse event detected!\n");
-		return 0;
+		break;
 	}
 
-	if (state < 0) return 0;
+	if (state < 0) action.type = CTRL_NOP;
 
 	switch (action.type) {
 	case CTRL_KEY:
@@ -192,10 +235,120 @@ static int handle_event(struct hid_device* dev, struct hid_report* report, u8* e
 		break;
 
 	case CTRL_MACRO: break;
-	default: return 0;		// Do nothing just like my lazy ass
 	}
+	// TODO: Unlock mutex here!
 
 	return 0;
+}
+
+// Currently selected device profile (decimal string)
+// Change keyboard profile (updates lights and "releases" keys)
+void set_profile_num(struct device* idev, u8 profile) {
+	// struct razer_report cmd;
+	// struct razer_report out;
+	// int status = 0;
+
+	struct drvdata* data = dev_get_drvdata(idev);
+
+	// Multiple threads could attempt this routine simultaneously
+	mutex_lock(&data->lock);
+
+	// Regular profiles should be 1 -> 8, or 0
+	// Values such as say 11 or 12 will map to 3 or 4 respectively
+	data->profile = ((profile - 1) % PROFILE_COUNT + 1) * !!profile;
+
+	/*/ Set profile indicator lights
+	//	TODO: This seems buggy to send 3 URBs in succession....perhaps even breaking my USB port?
+	cmd = init_report(CMD_SET_LED);
+	cmd.data[0] = 0x01;		// Variable store? (we may want this to be 0 instead)
+
+	// Blue profile led (1)
+	cmd.data[1] = 0x0E; 	// https://github.com/openrazer/openrazer/blob/master/driver/razercommon.h#L57
+	cmd.data[2] = profile & 0x01;
+	out = send_command(idev->parent, &cmd, &status);
+
+	// Green profile led (2)
+	cmd.data[1] = 0x0D; 	// https://github.com/openrazer/openrazer/blob/master/driver/razercommon.h#L56
+	cmd.data[2] = !!(profile & 0x02);
+	out = send_command(idev->parent, &cmd, &status);
+
+	// Red profile led (4)
+	cmd.data[1] = 0x0C; 	// https://github.com/openrazer/openrazer/blob/master/driver/razercommon.h#L55
+	cmd.data[2] = !!(profile & 0x04);
+	out = send_command(idev->parent, &cmd, &status);
+
+	// if (!status) log_report(&out);
+	//*/
+
+	// TODO: Update keypresses (release all keys with current profile and press again with new)
+
+	printk(KERN_INFO "Set tartarus profile to %d\n", data->profile);
+	mutex_unlock(&data->lock);
+}
+
+// NOTE: buf points to an array of PAGE_SIZE (or 4096 bytes on x86)
+static ssize_t profile_num_show(struct device* dev, struct device_attribute* attr, char* buf) {
+	struct drvdata* data = dev_get_drvdata(dev);
+	return snprintf(buf, 4, "%d", data->profile); 
+}
+
+static ssize_t profile_num_store(struct device* dev, struct device_attribute* attr, const char* buf, size_t len) {
+	unsigned long profile;
+	int status;
+
+	// Add a null terminator to the input string
+	char nbuf[4] = { 0 };
+	memcpy(nbuf, buf, (len > 3) ? 3 : len);		// nbuf[3] will always remain 0
+	
+	// Convert the provided (base 10) string into a number
+	status = kstrtoul(nbuf, 10, &profile);
+	if (status) { 
+		printk(KERN_WARNING "Tartarus: Unable to convert sysfs profile value '%s'\n", nbuf);
+		return len;
+	}
+	
+	set_profile_num(dev, profile % 0xFF);
+	return len;
+}
+
+// Manage the device profile (keymap) itself
+// Outputs the map of the currently selected profile
+static ssize_t profile_show(struct device* dev, struct device_attribute* attr, char* buf) {
+	size_t len = 0;
+	struct drvdata* data = dev_get_drvdata(dev);
+	struct kbddata* kdata;
+	u8 profile;
+	// struct mousedata* mdata;
+
+	mutex_lock(&data->lock);
+	switch (data->inum) {
+	case 1: break;
+	case 0:
+		// Keyboard
+		profile = data->profile;
+		if (!profile) break;		// Profile 0 reserved for "no profile"
+		
+		len = sizeof(struct profile);
+		kdata = data->idata;
+		memcpy(buf, kdata->maps + profile - 1, len);
+		
+		break;
+
+	case 2:
+		// Mouse
+		// TODO
+		// mdata = data->idata;
+		// profile = data->profile;		
+		// len = sizeof(struct mprofile);
+		break;
+	}
+
+	mutex_unlock(&data->lock);
+	return len;
+}
+
+static ssize_t profile_store(struct device* dev, struct device_attribute* attr, const char* buf, size_t len) {
+	return len;
 }
 
 
@@ -229,7 +382,7 @@ void log_event(u8* data, int len_data, u8 inum) {
 
 // Core handling function for keyboard event
 // NOTE: If implementing double-binds, that would be added here
-struct bind key_event(struct kbddata* data, int* pstate, u8* event, int len) {
+struct bind key_event(struct kbddata* data, u8 pnum, int* pstate, u8* event, int len) {
 	union keystate state_new = { 0 };
 	struct bind action = { 0 };
 
@@ -237,10 +390,12 @@ struct bind key_event(struct kbddata* data, int* pstate, u8* event, int len) {
 	u8 key = 0;		// Optional intermediate value for my sanity
 	u32 state = 0;
 
+	struct profile* map;
+
 	// Determine state change (if any)
 	// TODO: Assert that len is 8
 	for (i = 2; i < len; ++i) {
-		if (!(key = event[i])) continue;
+		if (!(key = event[i])) break;			// Key-presses always start at 2 and are listed sequentially
 		state_new.b[key / 8] |= 1 << (key % 8);
 	}
 
@@ -248,7 +403,8 @@ struct bind key_event(struct kbddata* data, int* pstate, u8* event, int len) {
 	for (i = 0; i < 8; ++i) {
 		state = state_new.comp[i] ^ data->state.comp[i];
 
-		// Kinda scuffed switch but more efficient than a while loop
+		// Kinda scuffed log_2 but probably more efficient than a while loop
+		// TODO: I think this ONLY works on little-endian architectures
 		switch (state) {
 			case 0x00000001: key =  0; break;
 			case 0x00000002: key =  1; break;
@@ -290,19 +446,20 @@ struct bind key_event(struct kbddata* data, int* pstate, u8* event, int len) {
 			case 0x40000000: key = 30; break;
 			case 0x80000000: key = 31; break;
 
-			default: continue;	// No differences (or the firmware broke lmaooo)
+			// No differences (or the firmware broke lmaooo)
+			default: continue;
 		}
 
-		key += i * 8;
+		key += i * 32;
 		break;
 	}
 
 	if (key) {
 		data->state.b[key / 8] ^= 1 << (key % 8);
-		*pstate = state_new.b[key / 8] & 1 << (key % 8);
+		*pstate = !!(state_new.b[key / 8] & 1 << (key % 8));
 		
+	// Event was not a normal key, check modifier keys
 	} else {
-		// No normal keys, check for modifier keys
 		//      0000 0100	(alt held)
 		// XOR  0000 0110	(shift pressed)
 		//	   -----------
@@ -312,19 +469,24 @@ struct bind key_event(struct kbddata* data, int* pstate, u8* event, int len) {
 		if (!key) return action;
 
 		data->modkey ^= key;
-		*pstate = event[0] & key;
+		*pstate = !!(event[0] & key);
+
+		// Convert the modifier key bit into a unique key value
+		// Said key values have been verified not to conflict with existing values
+		// ^^Alt = 0x44 ; Shift = 0x42
 		key |= MODKEY_MASK;
 	}
 
-	printk(KERN_INFO "Key press: 0x%02x\n", key);
-
 	// Look up device profile to determine keybind
-	// TODO: Helper function
+	map = data->maps + pnum;
+	action = map->keymap[key];
+
+	// printk(KERN_INFO "Key index: 0x%02x (0x%02x) ; state: %d\n", key, action.data, *pstate);
 
 	return action;
 }
 
-// Directly maps each device key to an array index
+/*/ Directly maps each device key to an array index
 // ^^(saves on memory and makes profiles more intuitive)
 int key_index_old(u8 key) {
 	switch (key) {
@@ -365,7 +527,7 @@ int key_index_old(u8 key) {
 		case 0x51: return 25;
 
 	} return 0;
-}
+} //*/
 
 
 // -- DEVICE COMMANDS --
@@ -455,17 +617,19 @@ struct razer_report init_report(unsigned char class, unsigned char id, unsigned 
 
 // Send prepared device URB
 // Returns the device response
+// dev needs to be the tartarus itself (parent of the interfaces to which the driver is bound)
 // Use req (aka the request report) to specify the command to send
 // cmd_errno can be NULL (but shouldn't be)
 // (Modified from OpenRazer driver)
-static struct razer_report send_command(struct hid_device* dev, struct razer_report* req, int* cmd_errno) {
+struct razer_report send_command(struct device* dev, struct razer_report* req, int* cmd_errno) {
 	int received = -1;		// Amount of data transferred (result of usb_control_msg)
 	char* request = NULL;	// razer_report containing the command parameters (i.e. get layout/set lighting pattern/etc)
 
 	struct razer_report response = { 0 };
 
-	struct usb_interface* parent = to_usb_interface(dev->dev.parent);
-	struct usb_device* tartarus = interface_to_usbdev(parent);
+	// struct usb_interface* intf = to_usb_interface(dev->dev.parent);
+	struct usb_interface* intf = to_usb_interface(dev);
+	struct usb_device* tartarus = interface_to_usbdev(intf);
 
 	// Allocate necessary memory and check for errors
 	request = (char*) kzalloc(sizeof(struct razer_report), GFP_KERNEL);
@@ -508,7 +672,7 @@ static struct razer_report send_command(struct hid_device* dev, struct razer_rep
 	// We aren't referencing the buffer so we copy it to the stack
 	memcpy(&response, request, sizeof(struct razer_report));
 
-	send_command_exit:
+send_command_exit:
 	kfree(request);
 	return response;
 }
