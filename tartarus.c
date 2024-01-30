@@ -24,7 +24,7 @@ static int device_probe(struct hid_device* dev, const struct hid_device_id* id) 
 
 	// Initalize driver data
 	switch (inum) {
-	case 1:
+	case EXT_INUM:
 		// TODO: Not sure what this interface is used for
 		//     ^^Just save the inum and exit
 		data = kzalloc(sizeof(struct drvdata), GFP_KERNEL);
@@ -34,8 +34,11 @@ static int device_probe(struct hid_device* dev, const struct hid_device_id* id) 
 		hid_set_drvdata(dev, data);
 		
 		return 0;
+		/*/
+		break;
+		//*/
 		
-	case 0:
+	case KBD_INUM:
 		// Keyboard
 		idata = kzalloc(sizeof(struct kbddata), GFP_KERNEL);
 		if ((status = idata ? 0 : -ENOMEM)) goto probe_fail;
@@ -58,7 +61,7 @@ static int device_probe(struct hid_device* dev, const struct hid_device_id* id) 
 
 		break;
 		
-	case 2:
+	case MOUSE_INUM:
 		// "Mouse"
 		idata = kzalloc(sizeof(struct mousedata), GFP_KERNEL);
 		if ((status = idata ? 0 : -ENOMEM)) goto probe_fail;
@@ -110,19 +113,15 @@ static int input_config(struct hid_device* dev, struct hid_input* input) {
 
 	// Specify our input conditions
 	switch (dev_data->inum) {
-	case 0:
-		// Keyboard
+	case EXT_INUM:		// Should never run but this is nondestructive if so
+	case KBD_INUM:
+		// Keyboard (https://elixir.bootlin.com/linux/v6.7.2/source/drivers/input/input.c#L432)
+		// KEYCODES: https://elixir.bootlin.com/linux/v6.7/source/include/uapi/linux/input-event-codes.h#L65
 		set_bit(EV_KEY, input_dev->evbit);
-		set_bit(1, input_dev->keybit);		// I still don't understand this
-
-		// https://elixir.bootlin.com/linux/v6.7/source/include/uapi/linux/input-event-codes.h#L65
-		// TODO: Are these keys that trigger events or possible outputs?
-		// for (int i = 1; i <= 127; i++) set_bit(i, input_dev->keybit);
-		// for (int i = 183; i <= 194; i++) set_bit(i, input_dev->keybit);
-		
+		for (int i = 1; i <= 248; ++i) set_bit(i, input_dev->keybit);
 		break;
 	
-	case 2:
+	case MOUSE_INUM:
 		// "Mouse"
 		set_bit(EV_REL, input_dev->evbit);
 		set_bit(BTN_MIDDLE, input_dev->keybit);
@@ -147,16 +146,16 @@ static void device_disconnect(struct hid_device* dev) {
 	if (!data) return;
 
 	switch (data->inum) {
-	case 1:
+	case EXT_INUM:
 		// Mysterious interface
 		kfree(data);
 		return;
-	case 0:
+	case KBD_INUM:
 		// Keyboard
 		device_remove_file(&dev->dev, &dev_attr_profile_num);
 		device_remove_file(&dev->dev, &dev_attr_profile);
 		break;
-	case 2:
+	case MOUSE_INUM:
 		// Mouse
 		// device_remove_file(&dev->dev, &dev_attr_profile);
 		break;
@@ -209,14 +208,17 @@ static int handle_event(struct hid_device* dev, struct hid_report* report, u8* e
 	if (!data) return -1;				// TODO: Different errno may be desirable
 	if (!data->profile) return 0;		// Device "disabled" take no action
 
-	// TODO: Lock the mutex here!
+	// We use a mutex here because some keys change the device profile
+	// As a result, it would be possible to press a key and release a different key	
+	mutex_lock(&data->lock);
+	
 	switch (data->inum) {
-	case 0:
+	case KBD_INUM:
 		action = key_event(data->idata, data->profile - 1, &state, event, len);
 		printk(KERN_INFO "Action type: 0x%02x ; Action data: 0x%02x ; State: %d\n", action.type, action.data, state);
 		break;
 
-	case 2:
+	case MOUSE_INUM:
 		printk(KERN_INFO "Mouse event detected!\n");
 		break;
 	}
@@ -236,8 +238,8 @@ static int handle_event(struct hid_device* dev, struct hid_report* report, u8* e
 
 	case CTRL_MACRO: break;
 	}
-	// TODO: Unlock mutex here!
 
+	mutex_unlock(&data->lock);
 	return 0;
 }
 
@@ -322,8 +324,8 @@ static ssize_t profile_show(struct device* dev, struct device_attribute* attr, c
 
 	mutex_lock(&data->lock);
 	switch (data->inum) {
-	case 1: break;
-	case 0:
+	case EXT_INUM: break;
+	case KBD_INUM:
 		// Keyboard
 		profile = data->profile;
 		if (!profile) break;		// Profile 0 reserved for "no profile"
@@ -334,7 +336,7 @@ static ssize_t profile_show(struct device* dev, struct device_attribute* attr, c
 		
 		break;
 
-	case 2:
+	case MOUSE_INUM:
 		// Mouse
 		// TODO
 		// mdata = data->idata;

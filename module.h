@@ -18,6 +18,10 @@
 #define WAIT_MIN    	600         // Minmum response wait time is 600 microseconds (0.6 ms)
 #define WAIT_MAX    	800         // ^^Maximum is 800 us (0.8 ms)
 
+#define KBD_INUM		0x00		// Interface number of the keyboard is 0
+#define EXT_INUM		0x01		// Unknown interface (keyboard?)
+#define MOUSE_INUM		0x02 		// Interface number of the mouse (wheel) is 2
+
 #define KEYLIST_LEN		8			// Maximum number of entries in the list of keys reported by the device
 #define KEYMAP_LEN		26			// Number of unique keys supported by the device
 #define PROFILE_COUNT	8			// Number of profiles stored in the driver
@@ -224,7 +228,7 @@ static struct hid_device_id id_table [] = {
 
 MODULE_DEVICE_TABLE(hid, id_table);
 
-static struct hid_driver tartarus_driver = {
+static struct hid_driver hid_tartarus = {
 	.name = "hid-tartarus",
 	.id_table = id_table,
 	.input_configured = input_config,
@@ -235,4 +239,4 @@ static struct hid_driver tartarus_driver = {
 };
 
 // Initalize the module with the kernel
-module_hid_driver(tartarus_driver);
+module_hid_driver(hid_tartarus);
