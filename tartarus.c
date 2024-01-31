@@ -239,6 +239,7 @@ static int handle_event(struct hid_device* dev, struct hid_report* report, u8* e
 	case CTRL_SHIFT:
 		// Shift mode only supported by keyboard buttons (mwheel could technically work but holy scuffed)
 		if (data->inum != KBD_INUM) break;
+		if (data->profile == action.data) break;
 
 		kdata = data->idata;
 		kdata->prev_profile = data->profile;
@@ -349,8 +350,8 @@ static ssize_t profile_show(struct device* dev, struct device_attribute* attr, c
 	size_t len = 0;
 	struct drvdata* data = dev_get_drvdata(dev);
 	struct kbddata* kdata;
-	u8 profile;
 	// struct mousedata* mdata;
+	u8 profile;
 
 	mutex_lock(&data->lock);
 	switch (data->inum) {
@@ -362,8 +363,8 @@ static ssize_t profile_show(struct device* dev, struct device_attribute* attr, c
 		
 		len = sizeof(struct profile);
 		kdata = data->idata;
-		memcpy(buf, kdata->maps + profile - 1, len);
 		
+		memcpy(buf, kdata->maps + profile - 1, len);
 		break;
 
 	case MOUSE_INUM:
@@ -379,8 +380,41 @@ static ssize_t profile_show(struct device* dev, struct device_attribute* attr, c
 	return len;
 }
 
+// TODO: Needs testing
 static ssize_t profile_store(struct device* dev, struct device_attribute* attr, const char* buf, size_t len) {
-	return len;
+	struct drvdata* data = dev_get_drvdata(dev);
+	struct kbddata* kdata;
+	// struct mousedata* mdata;
+	struct bind* profile_ptr;
+	u8 profile_num;
+	u8 bytes = 0;
+	
+	mutex_lock(&data->lock);
+	switch (data->inum) {
+	case EXT_INUM: break;
+	case KBD_INUM:
+		profile_num = data->profile;
+		if (!profile_num) break;		// Profile 0 reserved for "no profile"
+		
+		bytes = (len > sizeof(struct profile)) ? sizeof(struct profile) : len;
+		kdata = data->idata;
+
+		profile_ptr = kdata->maps[profile_num - 1].keymap;
+
+		// TODO: If we change the structure of a profile, we want to asser that len is at least long enough
+		// 		 for essential metadata information (like which lights to use for example)
+		memcpy(profile_ptr, buf, bytes);
+		memset(profile_ptr + bytes, 0, sizeof(struct profile) - bytes);
+		printk(KERN_INFO "Wrote %d bytes to keyboard profile %d\n", bytes, profile_num);
+		break;
+
+	case MOUSE_INUM:
+		// TODO
+		break;
+	}
+
+	mutex_unlock(&data->lock);
+	return bytes;
 }
 
 
