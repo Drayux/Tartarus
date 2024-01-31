@@ -68,8 +68,8 @@ struct kbddata {
 	// u8 keylist[KEYLIST_LEN];
 	u8 modkey;
 	union keystate {
-		u8 b[32];
-		u32 comp[8];
+		u8 bytes[32];
+		u32 words[8];
 	} state;
 
 	// Profile handling
