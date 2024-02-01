@@ -22,13 +22,9 @@
 #define EXT_INUM		0x01		// Unknown interface (keyboard?)
 #define MOUSE_INUM		0x02 		// Interface number of the mouse (wheel) is 2
 
-#define KEYLIST_LEN		8			// Maximum number of entries in the list of keys reported by the device
-#define KEYMAP_LEN		26			// Number of unique keys supported by the device
 #define PROFILE_COUNT	8			// Number of profiles stored in the driver
-
-#define MODKEY_MASK		0x40		// Applied to all modkey keycodes (i.e. 0000 0010 (lshift) -> 0100 0010)
-#define MODKEY_SHIFT	0x02		// Bit pattern for the shift key (key 16)
-#define MODKEY_ALT		0x04		// Bit pattern for the alt key (circular thumb button)
+#define KEYLIST_LEN		8			// Maximum number of entries in the list of keys reported by the device
+#define KEYMAP_LEN		25			// Number of unique keys supported by the device
 
 
 // COMMANDS
@@ -36,14 +32,47 @@
 #define CMD_SET_LED     0x03, 0x00, 0x03	// Set a specified LED with a given value
 
 
+// KEYS
+#define MODKEY_MASK		0x40		// Applied to all modkey keycodes (i.e. 0000 0010 (lshift) -> 0100 0010)
+#define MODKEY_SHIFT	0x02		// Bit pattern for the shift key (key 16)
+#define MODKEY_ALT		0x04		// Bit pattern for the alt key (circular thumb button)
+
+#define RZKEY_01		0x1E		// Funny names because we'd conflict with existing defines in linux kernel
+#define RZKEY_02		0x1F
+#define RZKEY_03		0x20
+#define RZKEY_04		0x21
+#define RZKEY_05		0X22
+#define RZKEY_06		0x2B
+#define RZKEY_07		0x14
+#define RZKEY_08		0x1A
+#define RZKEY_09		0x08
+#define RZKEY_10		0x15
+#define RZKEY_11		0x39
+#define RZKEY_12		0x04
+#define RZKEY_13		0x16
+#define RZKEY_14		0x07
+#define RZKEY_15		0x09
+#define RZKEY_16		0x42		// (Actual 0x02 -> Shift)
+#define RZKEY_17		0x1D
+#define RZKEY_18		0x1B
+#define RZKEY_19		0x06
+#define RZKEY_20		0x2C
+#define RZKEY_CIRCLE	0x44		// (Action 0x04 -> Alt)
+#define RZKEY_THMB_L	0x50
+#define RZKEY_THMB_U	0x52
+#define RZKEY_THMB_R	0x4F
+#define RZKEY_THMB_D	0x51
+
+
 // KEYBINDING
 #define CTRL_NOP		0x00		// No key action
 #define CTRL_KEY     	0x01		// Keyboard button action
 #define CTRL_SHIFT      0x02		// Hypershift mode action	(swap profile while held)
 #define CTRL_PROFILE   	0x03		// Change profile action	(swap profile upon press)
-#define CTRL_MACRO		0x04		// Play macro action 		(playback list of key actions)
-#define CTRL_MMOV		0x05		// Move the mouse
-#define CTRL_MWHEEL		0x06		// Mouse wheel action
+#define CTRL_SCRIPT		0x04		// TODO: Execute script relative to the current user's home dir
+#define CTRL_MACRO		0x05		// TODO: Play macro action 		(playback list of key actions)
+#define CTRL_MMOV		0x06		// TODO: Move the mouse
+#define CTRL_MWHEEL		0x07		// TODO: Mouse wheel action
 
 
 // STRUCTS
@@ -190,7 +219,6 @@ static int handle_event (struct hid_device*, struct hid_report*, u8*, int);
 static int mapping_bypass (struct hid_device* hdev, struct hid_input* hidinput, struct hid_field* field,
 			struct hid_usage* usage, unsigned long** bit, int* max) { return -1; }
 
-void set_profile_num(struct device*, u8);
 static ssize_t profile_num_show(struct device*, struct device_attribute*, char*);
 static ssize_t profile_num_store(struct device*, struct device_attribute*, const char*, size_t);
 
@@ -201,7 +229,8 @@ static ssize_t profile_store(struct device*, struct device_attribute*, const cha
 // INPUT PROCESSING
 void log_event (u8*, int, u8);
 struct bind key_event (struct kbddata*, u8, int*, u8*, int);
-// TODO: Determine if out-of-order errors exist (and need to be handled)
+// struct bind mouse_event(...)
+void swap_profile_kbd(struct drvdata*, u8);
 
 
 // DEVICE COMMANDS
