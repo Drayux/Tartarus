@@ -8,13 +8,14 @@
 #include <linux/hid.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/string.h>
+#include <linux/usb.h>
 
 // PROPERTIES
 #define VENDOR_ID		0x1532		// Razer USA, Ltd
 #define PRODUCT_ID		0x022b		// Tartarus_V2
 
 #define REPORT_LEN  	0x5A		// Each USB report has 90 bytes
-#define REPORT_IDX  	0x01		// Report/Response (consistent across all devices so I don't think I need two defs)
 #define WAIT_MIN    	600         // Minmum response wait time is 600 microseconds (0.6 ms)
 #define WAIT_MAX    	800         // ^^Maximum is 800 us (0.8 ms)
 
@@ -73,6 +74,7 @@
 #define CTRL_MACRO		0x05		// TODO: Play macro action 		(playback list of key actions)
 #define CTRL_MMOV		0x06		// TODO: Move the mouse
 #define CTRL_MWHEEL		0x07		// TODO: Mouse wheel action
+#define CTRL_DEBUG		0x10
 
 
 // STRUCTS
@@ -191,6 +193,12 @@ struct razer_report {
 	unsigned char reserved;
 };
 
+// Buffers for asynchronous control URBs
+struct urb_context {
+	struct usb_ctrlrequest setup;
+	struct razer_report req;
+};
+
 /*/ TODO: Sysfs format
 // The following currently exists exclusively for reference
 struct config {
@@ -230,7 +238,7 @@ static ssize_t profile_store(struct device*, struct device_attribute*, const cha
 void log_event (u8*, int, u8);
 struct bind key_event (struct kbddata*, u8, int*, u8*, int);
 // struct bind mouse_event(...)
-void swap_profile_kbd(struct drvdata*, u8);
+void swap_profile_kbd(struct device*, struct drvdata*, u8);
 
 
 // DEVICE COMMANDS
@@ -238,6 +246,8 @@ void log_report(struct razer_report*);
 unsigned char report_checksum(struct razer_report*);
 struct razer_report init_report(unsigned char, unsigned char, unsigned char);
 struct razer_report send_command(struct device*, struct razer_report*, int*);
+void set_profile_led_complete(struct urb*);
+void set_profile_led(struct device*, u8, u8);
 
 
 // DEVICE ATTRIBUTES (connects functions to udev events)

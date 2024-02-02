@@ -1,6 +1,3 @@
-#include <linux/string.h>   // memset() and memcpy()
-#include <linux/usb.h>      // URB types
-
 #include "module.h"			// Module and device defines
 #include "keymap.h"			// TEMPORARY HARD-CODED PROFILE
 
@@ -238,7 +235,7 @@ static int handle_event(struct hid_device* dev, struct hid_report* report, u8* e
 	case CTRL_SHIFT:
 		// Shift mode only supported by keyboard buttons (mwheel could technically work but holy scuffed)
 		if (data->inum != KBD_INUM) break;
-		if (action.data) swap_profile_kbd(data, action.data);
+		if (action.data) swap_profile_kbd(dev->dev.parent, data, action.data);
 		break;
 
 	case CTRL_PROFILE:
@@ -247,9 +244,10 @@ static int handle_event(struct hid_device* dev, struct hid_report* report, u8* e
 
 		// TODO: Figure out mouse support for this (probably involves linking to the other device data?)
 		if (data->inum != KBD_INUM) break;
-		if (action.data) swap_profile_kbd(data, action.data);
+		if (action.data) swap_profile_kbd(dev->dev.parent, data, action.data);
 		break;
 
+	case CTRL_DEBUG: break;
 	case CTRL_MACRO: break;
 	}
 
@@ -281,7 +279,7 @@ static ssize_t profile_num_store(struct device* dev, struct device_attribute* at
 
 	mutex_lock(&data->lock);
 	switch (data->inum) {
-		case KBD_INUM: swap_profile_kbd(data, profile); break;
+		case KBD_INUM: swap_profile_kbd(dev->parent, data, profile); break;
 	}
 	mutex_unlock(&data->lock);
 	
@@ -490,6 +488,13 @@ struct bind key_event(struct kbddata* kdata, u8 profile_num, int* pstate, u8* ev
 		key |= MODKEY_MASK;
 	}
 
+	/*/ (DEBUG) Rotate profiles
+	if (key == 0x42 && !(*pstate)) {
+		action.type = CTRL_PROFILE;
+		action.data = profile_num + 1;
+		return action;
+	} //*/
+
 	// Check if this is a hypershift return (to ignore the usual keybind)
 	// TODO: Determine if hinting that this will usually be false improves performance
 	if (!(*pstate) && (kdata->shift == key)) {
@@ -525,7 +530,7 @@ struct bind key_event(struct kbddata* kdata, u8 profile_num, int* pstate, u8* ev
 
 // Swap keyboard profiles (change profile number and handle currently pressed keys)
 // NOTE: This should only be called when wrapped in a device mutex lock!
-void swap_profile_kbd(struct drvdata* data, u8 profile_num) {
+void swap_profile_kbd(struct device* parent, struct drvdata* data, u8 profile_num) {
 	u8* idx;
 	u8 pressed;
 	u8 profile_num_prev;
@@ -559,30 +564,10 @@ void swap_profile_kbd(struct drvdata* data, u8 profile_num) {
 
 	// printk(KERN_INFO "Razer Tartarus: Swapping to profile: %d\n", profile_num);		// (DEBUG)
 
-	/*/ Set profile indicator lights
-	//	TODO: This seems buggy to send 3 URBs in succession....perhaps even breaking my USB port?
-	// I *think* this counts as interrupt context....where we'd need an alternative function for our URBs
-	// ^^https://elixir.bootlin.com/linux/latest/source/drivers/usb/core/message.c#L129
-	cmd = init_report(CMD_SET_LED);
-	cmd.data[0] = 0x01;		// Variable store? (we may want this to be 0 instead)
-
-	// Blue profile led (1)
-	cmd.data[1] = 0x0E; 	// https://github.com/openrazer/openrazer/blob/master/driver/razercommon.h#L57
-	cmd.data[2] = profile & 0x01;
-	out = send_command(idev->parent, &cmd, &status);
-
-	// Green profile led (2)
-	cmd.data[1] = 0x0D; 	// https://github.com/openrazer/openrazer/blob/master/driver/razercommon.h#L56
-	cmd.data[2] = !!(profile & 0x02);
-	out = send_command(idev->parent, &cmd, &status);
-
-	// Red profile led (4)
-	cmd.data[1] = 0x0C; 	// https://github.com/openrazer/openrazer/blob/master/driver/razercommon.h#L55
-	cmd.data[2] = !!(profile & 0x04);
-	out = send_command(idev->parent, &cmd, &status);
-
-	// if (!status) log_report(&out);
-	//*/
+	// Set profile indicator LEDs
+	set_profile_led(parent, 0x0C, profile_num & 0x04);		// Red
+	set_profile_led(parent, 0x0D, profile_num & 0x02);		// Green
+	set_profile_led(parent, 0x0E, profile_num & 0x01);		// Blue
 
 	// Swap keypresses (ignore key available in kdata->shift)
 	// Do nothing if device was diabled and subsequently enabled (profile 0 -> profile any)
@@ -608,7 +593,7 @@ void swap_profile_kbd(struct drvdata* data, u8 profile_num) {
 		input_report_key(data->input, key_old.data, 0x00);
 		if (key_new.type == CTRL_KEY) input_report_key(data->input, key_new.data, 0x01);
 
-		// Always send all keys version
+		// Always send all keys variation
 		// if (key_old.type == CTRL_KEY) input_report_key(data->input, key_old.data, 0x00);	// Release key
 		// if (key_new.type == CTRL_KEY) input_report_key(data->input, key_new.data, 0x01);	// Press key
 	}
@@ -736,7 +721,7 @@ struct razer_report send_command(struct device* dev, struct razer_report* req, i
 	//  0x09 --> HID_REQ_SET_REPORT
 	//  0X21 --> USB_TYPE_CLASS | USB_RECIP_INTERFACE | USB_DIR_OUT
 	// (Looks like this can also be done with usb_fill_control_urb followed by usb_submit_urb functions)
-	received = usb_control_msg(tartarus, usb_sndctrlpipe(tartarus, 0), 0x09, 0X21, 0x300, REPORT_IDX, request, REPORT_LEN, USB_CTRL_SET_TIMEOUT);
+	received = usb_control_msg(tartarus, usb_sndctrlpipe(tartarus, 0), 0x09, 0X21, 0x300, 0x01, request, REPORT_LEN, USB_CTRL_SET_TIMEOUT);
 	usleep_range(WAIT_MIN, WAIT_MAX);
 	if (received != REPORT_LEN) {
 		printk(KERN_WARNING "Device data transfer failed.\n");
@@ -749,7 +734,7 @@ struct razer_report send_command(struct device* dev, struct razer_report* req, i
 	//  0x01 --> HID_REQ_GET_REPORT
 	//  0XA1 --> USB_TYPE_CLASS | USB_RECIP_INTERFACE | USB_DIR_IN0x00, 0x86, 0x02
 	memset(request, 0, sizeof(struct razer_report));
-	received = usb_control_msg(tartarus, usb_rcvctrlpipe(tartarus, 0), 0x01, 0XA1, 0x300, REPORT_IDX, request, REPORT_LEN, USB_CTRL_SET_TIMEOUT);
+	received = usb_control_msg(tartarus, usb_rcvctrlpipe(tartarus, 0), 0x01, 0XA1, 0x300, 0x01, request, REPORT_LEN, USB_CTRL_SET_TIMEOUT);
 	// TODO: Do I need to use usleep_range again?
 	if (received != REPORT_LEN) {
 		// We've already made the attempt so return what we've got
@@ -763,4 +748,56 @@ struct razer_report send_command(struct device* dev, struct razer_report* req, i
 send_command_exit:
 	kfree(request);
 	return response;
+}
+
+void set_profile_led_complete(struct urb* ctrl) {
+	if (ctrl->status) printk(KERN_WARNING "HID Tartarus: Failed to send control URB\n");
+
+	if (ctrl->context) kfree(ctrl->context);
+	usb_free_urb(ctrl);
+}
+
+// Asynchronous device control request
+// Use this to change profile LEDs
+// dev -> Tartarus itself (idev->parent)
+void set_profile_led(struct device* dev, u8 led_idx, u8 state) {
+	struct usb_interface* intf = to_usb_interface(dev);
+	struct usb_device* usbdev = interface_to_usbdev(intf);
+
+	// NOTE: The buffer will be read from direct memory access (DMA) so it is recommended to malloc this field
+	struct urb_context* context = kzalloc(sizeof(struct urb_context), GFP_ATOMIC);
+	struct usb_ctrlrequest* setup;
+	struct razer_report* req;
+	struct urb* ctrl;
+
+	if (!context) return;		// TODO: Graceful errors
+
+	// Populate the setup buffer
+	setup = &context->setup;
+	setup->bRequestType = 0x21;
+	setup->bRequest = 0x09;
+	setup->wValue = 0x300;
+	setup->wIndex = 0x01;
+	setup->wLength = REPORT_LEN;
+
+	// Populate the request buffer
+	// TODO: Determine if it is possible to set all 3 LEDs at once
+	req = &context->req;
+	req->tr_id.id = 0xFF;
+	req->class = 0x03;
+	req->size = 0x03;
+	req->data[0] = 0x00;		// TODO: Can be 0 or 1, but unsure what this param does (variable store?)
+	req->data[1] = led_idx;		// BLUE -> 0x0E ; GREEN -> 0x0D ; RED -> 0x0C
+	req->data[2] = !!state;
+	req->cksum = report_checksum(req);
+
+	// TODO: Error handling
+	ctrl = usb_alloc_urb(0, GFP_ATOMIC);
+	if (!ctrl) {
+		kfree(context);
+		return;
+	}
+	
+	usb_fill_control_urb(ctrl, usbdev, usb_sndctrlpipe(usbdev, 0), (unsigned char*) setup, req, REPORT_LEN, set_profile_led_complete, context);
+	usb_submit_urb(ctrl, GFP_ATOMIC);
 }
