@@ -86,7 +86,7 @@ static int device_probe(struct hid_device* dev, const struct hid_device_id* id) 
 	if ((status = hid_hw_start(dev, HID_CONNECT_DEFAULT))) goto probe_fail;
 
 	// Log success to kernel
-	printk(KERN_INFO "HID Driver Bound:  Vendor ID: 0x%02x  Product ID: 0x%02x  Interface Num: 0x%02x\n", id->vendor, id->product, inum);
+	printk(KERN_INFO "HID Tartarus: Successfully bound device driver\n\tVendor ID: 0x%02x  Product ID: 0x%02x  Interface Num: 0x%02x\n", id->vendor, id->product, inum);
 	// printk(KERN_INFO "HID Device Info:  devnum: %d  devpath: %s\n", usb->devnum, usb->devpath);	// (debugging)
 
 	return 0;
@@ -94,7 +94,7 @@ static int device_probe(struct hid_device* dev, const struct hid_device_id* id) 
 probe_fail:
 	if (idata) kfree(idata);
 	if (data) kfree(data);
-	printk(KERN_WARNING "Failed to start HID driver: Razer Tartarus v2 (0x%02x)\n", inum);
+	printk(KERN_WARNING "HID Tartarus: Failed to initalize driver (status: 0x%02x)\n", inum);
 	return status;
 }
 
@@ -166,7 +166,7 @@ static void device_disconnect(struct hid_device* dev) {
 	if ((idata = data->idata)) kfree(idata);
 	kfree(data);
 
-	printk(KERN_INFO "HID Driver Unbound (Razer Tartarus v2)\n");
+	printk(KERN_INFO "HID Tartarus: Driver unbound\n");
 }
 
 // Called upon any keypress/release
@@ -273,7 +273,7 @@ static ssize_t profile_num_store(struct device* dev, struct device_attribute* at
 	// Convert the provided (base 10) string into a number
 	status = kstrtoul(nbuf, 10, &profile);
 	if (status) { 
-		printk(KERN_WARNING "Tartarus: Unable to convert sysfs profile value '%s'\n", nbuf);
+		printk(KERN_WARNING "HID Tartarus: Unable to convert sysfs profile value '%s'\n", nbuf);
 		return len;
 	}
 
@@ -347,7 +347,7 @@ static ssize_t profile_store(struct device* dev, struct device_attribute* attr, 
 		// 		 for essential metadata information (like which lights to use for example)
 		memcpy(profile_ptr, buf, bytes);
 		memset(profile_ptr + bytes, 0, sizeof(struct profile) - bytes);
-		printk(KERN_INFO "Wrote %d bytes to keyboard profile %d\n", bytes, profile_num);
+		printk(KERN_INFO "HID Tartarus: Wrote %d bytes to keyboard profile %d\n", bytes, profile_num);
 		break;
 
 	case MOUSE_INUM:
@@ -372,7 +372,7 @@ void log_event(u8* data, int len_data, u8 inum) {
 
 	// I'm kinda cheating but this won't go into the "production build" of the module
 	if (!bits_str || !data_str) {
-		printk(KERN_WARNING "Ran out of memory while logging device event (inum: %d)\n", inum);
+		printk(KERN_WARNING "HID Tartarus: Ran out of memory while logging device event (inum: %d)\n", inum);
 		return;
 	}
 
@@ -638,12 +638,12 @@ void log_report(struct razer_report* report) {
 	for (i = 0; i < 80; i += 2)
 		snprintf(params_str + (3 * i), 7, "%02x%02x%s", report->data[i], report->data[i + 1], ((i + 2) % 16) ? "  " : "\n\t");
 
-	printk(KERN_INFO "TARTARUS DEBUG INFORMATION:\n\n				\
-		\tTransaction ID: 0x%02x									\
-		\tStatus: %s\n												\
-		\tCommand ID: 0x%02x										\
-		\tClass: 0x%02x\n											\
-		\tSize: 0x%02x (%d)\t\tRemaining Packets: 0x%02x (%d)\n\n	\
+	printk(KERN_INFO "HID TARTARUS DEBUG INFORMATION:\n\n\
+		\tTransaction ID: 0x%02x\
+		\tStatus: %s\n\
+		\tCommand ID: 0x%02x\
+		\tClass: 0x%02x\n\
+		\tSize: 0x%02x (%d)\t\tRemaining Packets: 0x%02x (%d)\n\n\
 		\tData: 0x\n\t%s\n",
 		   report->tr_id.id,
 		   status_str,
@@ -707,7 +707,7 @@ struct razer_report send_command(struct device* dev, struct razer_report* req, i
 	// Allocate necessary memory and check for errors
 	request = (char*) kzalloc(sizeof(struct razer_report), GFP_KERNEL);
 	if (!request) {
-		printk(KERN_WARNING "Failed to communcate with device: Out of memory.\n");
+		printk(KERN_WARNING "HID Tartarus: No memory for control message request\n");
 		if (cmd_errno) *cmd_errno = -ENOMEM;
 		return response;
 	}
@@ -724,7 +724,7 @@ struct razer_report send_command(struct device* dev, struct razer_report* req, i
 	received = usb_control_msg(tartarus, usb_sndctrlpipe(tartarus, 0), 0x09, 0X21, 0x300, 0x01, request, REPORT_LEN, USB_CTRL_SET_TIMEOUT);
 	usleep_range(WAIT_MIN, WAIT_MAX);
 	if (received != REPORT_LEN) {
-		printk(KERN_WARNING "Device data transfer failed.\n");
+		printk(KERN_WARNING "HID Tartarus: Device data transfer failed\n");
 		if (cmd_errno) *cmd_errno = (received < 0) ? received : -EIO;
 		goto send_command_exit;
 	}
@@ -738,7 +738,7 @@ struct razer_report send_command(struct device* dev, struct razer_report* req, i
 	// TODO: Do I need to use usleep_range again?
 	if (received != REPORT_LEN) {
 		// We've already made the attempt so return what we've got
-		printk(KERN_WARNING "Invalid device data transfer. (%d bytes != %d bytes)\n", received, REPORT_LEN);
+		printk(KERN_WARNING "HID Tartarus: Invalid device data transfer. (%d bytes != %d bytes)\n", received, REPORT_LEN);
 		if (cmd_errno) *cmd_errno = received;
 	}
 

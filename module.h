@@ -257,7 +257,7 @@ static DEVICE_ATTR(profile, 0644, profile_show, profile_store);
 
 // MODULE
 MODULE_AUTHOR("Drayux");
-MODULE_DESCRIPTION("Driver for Razer Tartarus.v2");
+MODULE_DESCRIPTION("Some synapse features for the Razer Tartarus v2");
 MODULE_LICENSE("GPL");
 
 static struct hid_device_id id_table [] = {
