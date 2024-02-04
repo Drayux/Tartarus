@@ -202,13 +202,13 @@ static int handle_event(struct hid_device* dev, struct hid_report* report, u8* e
 	struct bind action = { 0 };
 	int state = -1;
 
-	// log_event(event, len, (data) ? data->inum : 0xFF); 	// (DEBUGGING)
-
 	if (!data) return -1;				// TODO: Different errno may be desirable (we might also just assume that we have data at this point)
 
 	// We use a mutex here because some keys change the device profile
 	// As a result, it would be possible to press a key and release a different key	
 	mutex_lock(&data->lock);
+
+	log_event(event, len, (data) ? data->inum : 0xFF); 	// (DEBUG)
 	
 	switch (data->inum) {
 	case KBD_INUM:
@@ -216,7 +216,7 @@ static int handle_event(struct hid_device* dev, struct hid_report* report, u8* e
 		break;
 
 	case MOUSE_INUM:
-		action.type = CTRL_MWHEEL;
+		action.type = CTRL_NOP;
 		break;
 	}
 
@@ -365,6 +365,7 @@ static ssize_t profile_store(struct device* dev, struct device_attribute* attr, 
 void log_event(u8* data, int len_data, u8 inum) {
 	int i;
 	int j;
+	static int num = 0;
 	unsigned mask = 0x80;
 
 	char* bits_str = kzalloc(9 * sizeof(char), GFP_KERNEL);
@@ -376,13 +377,23 @@ void log_event(u8* data, int len_data, u8 inum) {
 		return;
 	}
 
-	for (i = 0; i < len_data; i++) {
-		for (j = 0; j < 8; j++)
-			snprintf(bits_str + j, 2, "%u", !!(data[i] & (mask >> j)));
-		snprintf(data_str + (i * 10), 11, "%s%s", bits_str, /*((i + 1) % 8) ? "  " : " \n"*/ "  ");
-	}
+ 	// Bits output version
+	// for (i = 0; i < len_data; ++i) {
+	// 	for (j = 0; j < 8; ++j)
+	// 		snprintf(bits_str + j, 2, "%u", !!(data[i] & (mask >> j)));
+	// 	snprintf(data_str + (i * 10), 11, "%s%s", bits_str, /*((i + 1) % 8) ? "  " : " \n"*/ "  ");
+	// }
+	// printk(KERN_INFO "RAW EVENT:  inum: %d  size: %d  data:\n\t%s\n", inum, len_data, data_str);
 
-	printk(KERN_INFO "RAW EVENT:  inum: %d  size: %d  data:\n\t%s\n", inum, len_data, data_str);
+	// Hex output version
+	for (i = 2; i < len_data; ++i) {
+		if (!data[i]) {
+			if (i == 2) sprintf(data_str, "EMPTY");
+			break;
+		}
+		snprintf(data_str + (i - 2) * 5, 6, "0x%02x ", data[i]);
+	}
+	printk(KERN_INFO "EVENT %d: %s\n", ++num, data_str);
 
 	kfree(bits_str);
 	kfree(data_str);
