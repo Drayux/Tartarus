@@ -16,6 +16,9 @@
 - Handle "mouse" events
  - Swap device profiles with mouse wheel (needs implementation specifics--should mouse profiles be independent?)
 - Setup DKMS
+- Consider change to hypershift functionality
+ - Synapse will not "release and swap" keys on a hypershift swap like how I configured the device, which could lead to an unexpected "feel"
+ - It may be worth changing this functionality, or adding an option to replicate this (maybe CTRL_KEY_PERSIST as an idea?)
 
 ## About
 About a year ago, I decided to officially throw in the towel on Windows. I knew there would be a couple jarring changes when moving to a world with a general lack of proprietary support, but the Linux experience has absolutely made it worth it. Alas, one of these challenges is a gaming perhipheral I swear by: The Razer Tartarus. This is a little half-keyboard device is a programmable macro pad with fantastic ergonomics, and I have found it an essential element in my gaming environment. Of course, using it on Linux is not so simple. All of the device functionality is handled in user space by an application with exclusive Windows support, and the device itself has no onboard keymap storage.  

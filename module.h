@@ -15,29 +15,22 @@
 #define VENDOR_ID		0x1532		// Razer USA, Ltd
 #define PRODUCT_ID		0x022b		// Tartarus_V2
 
-#define REPORT_LEN  	0x5A		// Each USB report has 90 bytes
-#define WAIT_MIN    	600         // Minmum response wait time is 600 microseconds (0.6 ms)
-#define WAIT_MAX    	800         // ^^Maximum is 800 us (0.8 ms)
+#define PROFILE_COUNT	8			// Number of profiles stored in the driver (each profile ~0.5 KB)
+#define KEYLIST_LEN		8			// Maximum number device-supported simultaneous keypresses (6 normal keys + shift and alt)
+#define KEYMAP_LEN		0x100		// Number of entries in a complete keymap
+#define REPORT_LEN  	0x5A		// Size of a USB control report (90 bytes)
 
 #define KBD_INUM		0x00		// Interface number of the keyboard is 0
 #define EXT_INUM		0x01		// Unknown interface (keyboard?)
 #define MOUSE_INUM		0x02 		// Interface number of the mouse (wheel) is 2
 
-#define PROFILE_COUNT	8			// Number of profiles stored in the driver
-#define KEYLIST_LEN		8			// Maximum number of entries in the list of keys reported by the device
-#define KEYMAP_LEN		25			// Number of unique keys supported by the device
 
-
-// COMMANDS
+// COMMANDS (TODO: Consider removing old URB functions, making these obsolete)
 #define CMD_KBD_LAYOUT  0x00, 0x86, 0x02	// Query the device for its keyboard layout
 #define CMD_SET_LED     0x03, 0x00, 0x03	// Set a specified LED with a given value
 
 
 // KEYS
-#define MODKEY_MASK		0x40		// Applied to all modkey keycodes (i.e. 0000 0010 (lshift) -> 0100 0010)
-#define MODKEY_SHIFT	0x02		// Bit pattern for the shift key (key 16)
-#define MODKEY_ALT		0x04		// Bit pattern for the alt key (circular thumb button)
-
 #define RZKEY_01		0x1E		// Funny names because we'd conflict with existing defines in linux kernel
 #define RZKEY_02		0x1F
 #define RZKEY_03		0x20
@@ -58,23 +51,28 @@
 #define RZKEY_18		0x1B
 #define RZKEY_19		0x06
 #define RZKEY_20		0x2C
-#define RZKEY_CIRCLE	0x44		// (Action 0x04 -> Alt)
+#define RZKEY_CIRCLE	0x44		// (Actual 0x04 -> Alt)
 #define RZKEY_THMB_L	0x50
 #define RZKEY_THMB_U	0x52
 #define RZKEY_THMB_R	0x4F
 #define RZKEY_THMB_D	0x51
 
+#define MODKEY_SHIFT	0x02		// Bit pattern for the shift key (key 16)
+#define MODKEY_ALT		0x04		// Bit pattern for the alt key (circular thumb button)
+#define MODKEY_MASK		0x40		// Applied to all modkey keycodes (i.e. 0000 0010 (lshift) -> 0100 0010)
 
-// KEYBINDING
+
+// BINDS
 #define CTRL_NOP		0x00		// No key action
 #define CTRL_KEY     	0x01		// Keyboard button action
 #define CTRL_SHIFT      0x02		// Hypershift mode action	(swap profile while held)
 #define CTRL_PROFILE   	0x03		// Change profile action	(swap profile upon press)
-#define CTRL_SCRIPT		0x04		// TODO: Execute script relative to the current user's home dir
-#define CTRL_MACRO		0x05		// TODO: Play macro action 		(playback list of key actions)
-#define CTRL_MMOV		0x06		// TODO: Move the mouse
-#define CTRL_MWHEEL		0x07		// TODO: Mouse wheel action
-#define CTRL_DEBUG		0x10
+#define CTRL_SWKEY		0x04		// TODO: Key that will be "swapped" upon hypershift state change
+#define CTRL_SCRIPT		0x05		// TODO: Execute script relative to the current user's home dir
+#define CTRL_MACRO		0x06		// TODO: Play macro action 		(playback list of key actions)
+#define CTRL_MMOV		0x07		// TODO: Move the mouse
+#define CTRL_MWHEEL		0x08		// TODO: Mouse wheel action
+#define CTRL_DEBUG		0xFF		// (DEBUG)
 
 
 // STRUCTS
@@ -82,6 +80,20 @@
 struct bind {
 	u8 type;		// Event type
 	u8 data;		// Respective data (key code or index of macro)
+};
+
+// Single event and its respective state
+struct event {
+	u8 idx;			// "Key" index
+	u8 state;		// 0: Release ; 1: Press
+};
+
+// Bitmap container for interface key states
+struct keystate {
+	union {
+		u8 bytes [32];
+		u32 data [8];
+	};
 };
 
 // Device driver data (for passing data across functions; unique per interface)
@@ -95,29 +107,23 @@ struct drvdata {
 
 // Driver data for keyboard interface
 struct kbddata {
-	// Stores the previous key state
-	// u8 keylist[KEYLIST_LEN];
-	u8 modkey;
-	union keystate {
-		u8 bytes[32];
-		u32 words[8];
-	} state;
+	u8 keylist [KEYLIST_LEN];			// Device button state
+	struct keystate shift_keylist;		// Keys pressed within hypershift mode
+	struct keystate ignore_keylist;		// Keys where their release should be ignored
+	
+	u8 shift;							// Current hypershift profile number
+	u8 revert;							// Hypershift return profile number ; 0 -> NOP
 
-	// Profile handling
-	u8 shift;			// Index of "active" profile key (usually hypershift button) ; Used for profiles so the "release" of the key can be ignored ; 0 if nothing to do
-	u8 prev_profile;	// ID of profile to return to upon release ; 0(?) if profile should be kept (profile swap)
-
-	// Array of keymap arrays, corresponding to the device profiles
-	// Profiles are identified with values 1-8, corresponding to indexes 0-7 here
+	// Device profiles numbers range 1-8, corresponding to indexes 0-7 ; 0 -> Device disabled
 	struct profile {
-		struct bind keymap[0x100];
-	} maps[PROFILE_COUNT];
+		struct bind keymap [KEYMAP_LEN];
+	} maps [PROFILE_COUNT];
 };
 
 struct mousedata {
 	struct mprofile {
-		struct bind keymap[8];
-	} maps[PROFILE_COUNT];
+		struct bind keymap [8];
+	} maps [PROFILE_COUNT];
 };
 
 // TODO: Wild idea for a "mouse" bind
@@ -183,7 +189,7 @@ struct razer_report {
 	// Command data
 	// If [Host -> Device] : This is where we place command arguments
 	// If [Device -> Host] : This contains the device response data
-	unsigned char data[80];
+	unsigned char data [80];
 
 	// Argument/Data checksum (crc)
 	// Algorithm XORs each byte of the report, starting at 2 and ending at 87 (inclusive) [Skips bytes 0, 1, 88, 89]
@@ -220,34 +226,37 @@ struct config {
 
 
 // HANLDERS (device event hooks)
-static int device_probe(struct hid_device*, const struct hid_device_id*);
+static int device_probe (struct hid_device*, const struct hid_device_id*);
 static int input_config (struct hid_device*, struct hid_input*);
-static void device_disconnect(struct hid_device*);
+static void device_disconnect (struct hid_device*);
 static int handle_event (struct hid_device*, struct hid_report*, u8*, int);
 static int mapping_bypass (struct hid_device* hdev, struct hid_input* hidinput, struct hid_field* field,
 			struct hid_usage* usage, unsigned long** bit, int* max) { return -1; }
 
-static ssize_t profile_num_show(struct device*, struct device_attribute*, char*);
-static ssize_t profile_num_store(struct device*, struct device_attribute*, const char*, size_t);
+static ssize_t profile_num_show (struct device*, struct device_attribute*, char*);
+static ssize_t profile_num_store (struct device*, struct device_attribute*, const char*, size_t);
 
-static ssize_t profile_show(struct device*, struct device_attribute*, char*);
-static ssize_t profile_store(struct device*, struct device_attribute*, const char*, size_t);
+static ssize_t profile_show (struct device*, struct device_attribute*, char*);
+static ssize_t profile_store (struct device*, struct device_attribute*, const char*, size_t);
 
 
 // INPUT PROCESSING
 void log_event (u8*, int, u8);
-struct bind key_event (struct kbddata*, u8, int*, u8*, int);
-// struct bind mouse_event(...)
-void swap_profile_kbd(struct device*, struct drvdata*, u8);
+int process_event_kbd (struct event*, u8*, u8*, int);
+// int process_event_mouse ( ... );
+void resolve_event_kbd (struct event*, struct drvdata*);
+// void resolve_event_mouse ( ... );
+void swap_profile_kbd (struct device*, struct drvdata*, u8);
+// void swap_profile_mouse ( ... );
 
 
 // DEVICE COMMANDS
-void log_report(struct razer_report*);
-unsigned char report_checksum(struct razer_report*);
-struct razer_report init_report(unsigned char, unsigned char, unsigned char);
-struct razer_report send_command(struct device*, struct razer_report*, int*);
-void set_profile_led_complete(struct urb*);
-void set_profile_led(struct device*, u8, u8);
+void log_report (struct razer_report*);
+unsigned char report_checksum (struct razer_report*);
+struct razer_report init_report (unsigned char, unsigned char, unsigned char);
+struct razer_report send_command (struct device*, struct razer_report*, int*);
+void set_profile_led_complete (struct urb*);
+void set_profile_led (struct device*, u8, u8);
 
 
 // DEVICE ATTRIBUTES (connects functions to udev events)

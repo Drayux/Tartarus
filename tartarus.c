@@ -3,7 +3,7 @@
 
 // -- DEVICE EVENTS --
 // Probe called upon device detection (initalization step)
-static int device_probe(struct hid_device* dev, const struct hid_device_id* id) {
+static int device_probe (struct hid_device* dev, const struct hid_device_id* id) {
 	int status;
 
 	struct usb_interface* intf = to_usb_interface(dev->dev.parent);
@@ -77,7 +77,7 @@ static int device_probe(struct hid_device* dev, const struct hid_device_id* id) 
 	mutex_init(&data->lock);
 	data->inum = inum;
 	data->idata = idata;
-	data->profile = 1;		// (DEBUGGING)
+	data->profile = 1;
 	hid_set_drvdata(dev, data);
 
 	// Begin device communication
@@ -100,7 +100,7 @@ probe_fail:
 
 // Define device input parameters (input_dev event types, available keys, etc.)
 // NOTE: Called by kernel during hid_hw_start() (insde device probe)
-static int input_config(struct hid_device* dev, struct hid_input* input) {
+static int input_config (struct hid_device* dev, struct hid_input* input) {
 	struct input_dev* input_dev = input->input;
 	struct drvdata* dev_data = hid_get_drvdata(dev);
 	if (!dev_data) return -1;	// TODO: We might want to use a different errno
@@ -135,7 +135,7 @@ static int input_config(struct hid_device* dev, struct hid_input* input) {
 }
 
 // Cleanup resources when device is disconnected
-static void device_disconnect(struct hid_device* dev) {
+static void device_disconnect (struct hid_device* dev) {
 	// Get the device data
 	struct drvdata* data = hid_get_drvdata(dev);
 	void* idata;
@@ -171,7 +171,7 @@ static void device_disconnect(struct hid_device* dev) {
 
 // Called upon any keypress/release
 // NOTE: EV_KEY and available keys must be set in .input_configured
-static int handle_event(struct hid_device* dev, struct hid_report* report, u8* event, int len) {
+static int handle_event (struct hid_device* dev, struct hid_report* report, u8* raw_event, int raw_event_len) {
 	/*/ Some notes for developement:
 
 		The device seems to keep track of the order that the keys are
@@ -197,71 +197,55 @@ static int handle_event(struct hid_device* dev, struct hid_report* report, u8* e
 		https://elixir.bootlin.com/linux/v6.0.11/source/drivers/hid/usbhid/usbkbd.c#L117
 	/*/
 
+	static int ev_num = 0;		// (DEBUG)
+
+	int i;
+	int len = 0;
+	struct event evlist[KEYLIST_LEN];
 	struct drvdata* data = hid_get_drvdata(dev);
-	// struct kbddata* kdata;
-	struct bind action = { 0 };
-	int state = -1;
+	struct kbddata* kdata;
 
-	// log_event(event, len, (data) ? data->inum : 0xFF); 	// (DEBUGGING)
-
-	if (!data) return -1;				// TODO: Different errno may be desirable (we might also just assume that we have data at this point)
+	if (!data) return -1;				// Device not initalized
+	if (!data->profile) return 0;		// Device is disabled
 
 	// We use a mutex here because some keys change the device profile
 	// As a result, it would be possible to press a key and release a different key	
 	mutex_lock(&data->lock);
-	
+	// log_event(event, size, (data) ? data->inum : 0xFF); 	// (DEBUG)
+
+	// Build a list of input actions from the event, updating the device state
 	switch (data->inum) {
 	case KBD_INUM:
-		action = key_event(data->idata, data->profile, &state, event, len);
+		kdata = data->idata;
+		len = process_event_kbd(evlist, kdata->keylist, raw_event, raw_event_len);
+		for (i = 0; i < len; ++i) resolve_event_kbd(evlist + i, data);
 		break;
 
 	case MOUSE_INUM:
-		action.type = CTRL_MWHEEL;
+		// TODO: Mouse events
 		break;
 	}
 
-	// TODO: Error handling (this was the old solution)
-	// if (state < 0) action.type = CTRL_NOP;
+	// (DEBUG)
+	++ev_num;
+	for (i = 0; i < len; ++i) printk(KERN_INFO "EVENT %d -- Key Action: 0x%02x (%s)\n", 
+		ev_num, evlist[i].idx, evlist[i].state ? "DOWN" : "UP");
 
-	// Debug output
-	// printk(KERN_INFO "Key index: 0x%02x (0x%02x) ; state: %d\n", key, action.data, state);
-	// printk(KERN_INFO "Action type: 0x%02x ; Action data: 0x%02x ; State: %d\n", action.type, action.data, state);
-
-	switch (action.type) {
-	case CTRL_KEY:
-		input_report_key(data->input, action.data, state);
-		break;
-
-	case CTRL_SHIFT:
-		// Shift mode only supported by keyboard buttons (mwheel could technically work but holy scuffed)
-		if (data->inum != KBD_INUM) break;
-		if (action.data) swap_profile_kbd(dev->dev.parent, data, action.data);
-		break;
-
-	case CTRL_PROFILE:
-		// Profile swaps from within hypershift mode will reset hypershift mode
-		// NOTE: Only key presses will make it here (else we'd also check for state in our swap_profile_kbd condition)
-
-		// TODO: Figure out mouse support for this (probably involves linking to the other device data?)
-		if (data->inum != KBD_INUM) break;
-		if (action.data) swap_profile_kbd(dev->dev.parent, data, action.data);
-		break;
-
-	case CTRL_DEBUG: break;
-	case CTRL_MACRO: break;
-	}
+	// TODO: Resolve binds from index list
+	// NOTE: Recall that each event should be processed individually (consider profile swap -> keypress)
+	// NOTE: If implementing double-binds, that would be added here
 
 	mutex_unlock(&data->lock);
 	return 0;
 }
 
 // NOTE: buf points to an array of PAGE_SIZE (or 4096 bytes on x86)
-static ssize_t profile_num_show(struct device* dev, struct device_attribute* attr, char* buf) {
+static ssize_t profile_num_show (struct device* dev, struct device_attribute* attr, char* buf) {
 	struct drvdata* data = dev_get_drvdata(dev);
 	return snprintf(buf, 4, "%d", data->profile); 
 }
 
-static ssize_t profile_num_store(struct device* dev, struct device_attribute* attr, const char* buf, size_t len) {
+static ssize_t profile_num_store (struct device* dev, struct device_attribute* attr, const char* buf, size_t len) {
 	unsigned long profile;
 	int status;
 	struct drvdata* data = dev_get_drvdata(dev);
@@ -288,7 +272,7 @@ static ssize_t profile_num_store(struct device* dev, struct device_attribute* at
 
 // Manage the device profile (keymap) itself
 // Outputs the map of the currently selected profile
-static ssize_t profile_show(struct device* dev, struct device_attribute* attr, char* buf) {
+static ssize_t profile_show (struct device* dev, struct device_attribute* attr, char* buf) {
 	size_t len = 0;
 	struct drvdata* data = dev_get_drvdata(dev);
 	struct kbddata* kdata;
@@ -323,7 +307,7 @@ static ssize_t profile_show(struct device* dev, struct device_attribute* attr, c
 }
 
 // TODO: Needs testing
-static ssize_t profile_store(struct device* dev, struct device_attribute* attr, const char* buf, size_t len) {
+static ssize_t profile_store (struct device* dev, struct device_attribute* attr, const char* buf, size_t len) {
 	struct drvdata* data = dev_get_drvdata(dev);
 	struct kbddata* kdata;
 	// struct mousedata* mdata;
@@ -362,10 +346,11 @@ static ssize_t profile_store(struct device* dev, struct device_attribute* attr, 
 
 // -- INPUT PROCESSING --
 // Log the output of a raw event for debugging
-void log_event(u8* data, int len_data, u8 inum) {
+void log_event (u8* data, int len_data, u8 inum) {
 	int i;
 	int j;
 	unsigned mask = 0x80;
+	// static int num = 0;		// (DEBUG)
 
 	char* bits_str = kzalloc(9 * sizeof(char), GFP_KERNEL);
 	char* data_str = kzalloc((10 * len_data + 1) * sizeof(char), GFP_KERNEL);
@@ -376,144 +361,160 @@ void log_event(u8* data, int len_data, u8 inum) {
 		return;
 	}
 
-	for (i = 0; i < len_data; i++) {
-		for (j = 0; j < 8; j++)
+ 	// Bits output version
+	for (i = 0; i < len_data; ++i) {
+		for (j = 0; j < 8; ++j)
 			snprintf(bits_str + j, 2, "%u", !!(data[i] & (mask >> j)));
 		snprintf(data_str + (i * 10), 11, "%s%s", bits_str, /*((i + 1) % 8) ? "  " : " \n"*/ "  ");
 	}
-
 	printk(KERN_INFO "RAW EVENT:  inum: %d  size: %d  data:\n\t%s\n", inum, len_data, data_str);
+
+	/*/ Hex output version
+	for (i = 2; i < len_data; ++i) {
+		if (!data[i]) {
+			if (i == 2) sprintf(data_str, "EMPTY");
+			break;
+		}
+		snprintf(data_str + (i - 2) * 5, 6, "0x%02x ", data[i]);
+	}
+	printk(KERN_INFO "EVENT %d: %s\n", ++num, data_str); //*/
 
 	kfree(bits_str);
 	kfree(data_str);
 }
 
-// Core handling function for keyboard event
-// NOTE: If implementing double-binds, that would be added here
-struct bind key_event(struct kbddata* kdata, u8 profile_num, int* pstate, u8* event, int len) {
-	union keystate state_new = { 0 };
-	struct bind action = { 0 };
+// Extract key events from the raw event
+// Returns the number of elements in the keylist array
+int process_event_kbd (struct event* evlist, u8* keylist, u8* raw_event, int raw_event_size) {
+	u8 key;			// Key from new event
+	u8 comp;		// Key from old event
+	
+	int idx;
+	int off = 0;
+	int count = 0;
 
-	int i;
-	u8 key = 0;		// Optional intermediate value for my sanity
-	u32 state = 0;
-
-	struct profile* map;
-
-	// Check if device is disabled
-	if (!profile_num) return action;
-
-	// Determine state change (if any)
-	// TODO: Assert that len is 8
-	for (i = 2; i < len; ++i) {
-		if (!(key = event[i])) break;			// Key-presses always start at 2 and are listed sequentially
-		state_new.bytes[key / 8] |= 1 << (key % 8);
+	// Memory safety assertions
+	// TODO: Determine expected size conditions
+	if (!raw_event_size || !raw_event) return 0;
+	if (raw_event_size != KEYLIST_LEN) {
+		printk(KERN_WARNING "HID Tartarus: Keyboard raw event has size 0x%02x (different from 0x%02x!)\n", raw_event_size, KEYLIST_LEN);
+		raw_event_size = KEYLIST_LEN;
 	}
 
-	// NOTE: We assume that there will be at most one different key
-	for (i = 0; i < 8; ++i) {
-		state = state_new.words[i] ^ kdata->state.words[i];
-
-		// Kinda scuffed log_2 but probably more efficient than a while loop
-		// TODO: I think this ONLY works on little-endian architectures
-		switch (state) {
-			case 0x00000001: key =  0; break;
-			case 0x00000002: key =  1; break;
-			case 0x00000004: key =  2; break;
-			case 0x00000008: key =  3; break;
-
-			case 0x00000010: key =  4; break;
-			case 0x00000020: key =  5; break;
-			case 0x00000040: key =  6; break;
-			case 0x00000080: key =  7; break;
-
-			case 0x00000100: key =  8; break;
-			case 0x00000200: key =  9; break;
-			case 0x00000400: key = 10; break;
-			case 0x00000800: key = 11; break;
-
-			case 0x00001000: key = 12; break;
-			case 0x00002000: key = 13; break;
-			case 0x00004000: key = 14; break;
-			case 0x00008000: key = 15; break;
-
-			case 0x00010000: key = 16; break;
-			case 0x00020000: key = 17; break;
-			case 0x00040000: key = 18; break;
-			case 0x00080000: key = 19; break;
-
-			case 0x00100000: key = 20; break;
-			case 0x00200000: key = 21; break;
-			case 0x00400000: key = 22; break;
-			case 0x00800000: key = 23; break;
-
-			case 0x01000000: key = 24; break;
-			case 0x02000000: key = 25; break;
-			case 0x04000000: key = 26; break;
-			case 0x08000000: key = 27; break;
-
-			case 0x10000000: key = 28; break;
-			case 0x20000000: key = 29; break;
-			case 0x40000000: key = 30; break;
-			case 0x80000000: key = 31; break;
-
-			// No differences (or the firmware broke lmaooo)
-			default: continue;
-		}
-
-		key += i * 32;
-		break;
-	}
-
-	if (key) {
-		kdata->state.bytes[key / 8] ^= 1 << (key % 8);
-		*pstate = !!(state_new.bytes[key / 8] & 1 << (key % 8));
-		
-	// Event was not a normal key, check modifier keys
-	} else {
-		//      0000 0100	(alt held)
-		// XOR  0000 0110	(shift pressed)
-		//	   -----------
-		//      0000 0010	(shift)
-
-		key = event[0] ^ kdata->modkey;
-		if (!key) return action;
-
-		kdata->modkey ^= key;
-		*pstate = !!(event[0] & key);
+	// Check for changes to the modifier key
+	// NOTE: Modifier keys appear to always have their own event
+	if ((key = raw_event[0] ^ keylist[0])) {
+		keylist[0] = raw_event[0];
 
 		// Convert the modifier key bit into a unique key index
 		// Resulting values have been verified not to conflict with device values
 		// ^^Alt = 0x44 ; Shift = 0x42
-		key |= MODKEY_MASK;
+		if (key & MODKEY_SHIFT) evlist[count++] = (struct event) {
+			.idx = MODKEY_MASK | MODKEY_SHIFT,
+			.state = !!(raw_event[0] & MODKEY_SHIFT)
+		};
+		
+		if (key & MODKEY_ALT) evlist[count++] = (struct event) {
+			.idx = MODKEY_MASK | MODKEY_ALT,
+			.state = !!(raw_event[0] & MODKEY_ALT)
+		};
+
+		return count;
 	}
 
-	/*/ (DEBUG) Rotate profiles
-	if (key == 0x42 && !(*pstate)) {
-		action.type = CTRL_PROFILE;
-		action.data = profile_num + 1;
-		return action;
-	} //*/
+	// Scan old/new keylist for differences in keypresses
+	// NOTE: The relative order of the presses should always be consistent
+	for (idx = 2; idx < raw_event_size; ++idx) {
+		// Brainstorm time
+		// New keylist will always be missing a key, or new keys are tacked onto the end
+		// Mismatched keys means that key was dropped, unless pointer to top key is no key
+		
+		key = raw_event[idx];
+		comp = (idx + off >= KEYLIST_LEN) ? 0x00 : keylist[idx + off];
+		
+		if (!key && !comp) break;		// No event data remaining
+		if (key == comp) continue;		// Key state is unchanged
 
-	// Check if this is a hypershift return (to ignore the usual keybind)
-	// TODO: Determine if hinting that this will usually be false improves performance
-	if (!(*pstate) && (kdata->shift == key)) {
-		// Key index is guaranteed here
-		// NOTE: Profile key will be set as active HS key and then released triggering this block
-		action.type = CTRL_SHIFT;
-		action.data = kdata->prev_profile;		// Shift is ignored if action.data is 0
-		kdata->shift = 0;
-		// kdata->prev_profile = 0;				// This value is always overridden by a SHIFT or PROFILE event below
-		return action;
+		// Key release
+		if (comp) {
+			evlist[count++] = (struct event) {
+				.idx = comp,
+				.state = 0x00
+			};
+			++off;
+			--idx;			// key should remain the same value
+			continue;
+		}
+
+		// Key press
+		evlist[count++] = (struct event) {
+			.idx = key,
+			.state = 0x01
+		};
 	}
+
+	memcpy(keylist, raw_event, raw_event_size);		// TODO: Should I add sizeof(u8) to this?
+	// TODO: If raw_event_size is not always 8, I may need to copy zeros to the remainder of the array (KEYLIST_LEN - raw_event_size)
+	return count;
+}
+
+// Resolve keyboard action from a key index
+// Sets driver interface data relevant to the processing of the mapped action
+// NOTE: Does not check for null pointers
+void resolve_event_kbd (struct event* ev, struct drvdata* data) {
+	/*/ -- Profile functionality overview --
+	
+		For any key release, check the hypershift "key state" bitmap (TODO: also skip if shift is 0)
+		If present, release keys on the revert profile number and update the bitmap (shift_keylist)
+		Else release on the original profile
+	
+		For any key press, send the key on the active profile
+		Then, add the key to the bitmap if the current profile and shift profile are the same
+		(This is not equivalent to current_profile != shift_profile since a profile swap will not update 'revert')
+	
+		(Both instances should, and already do, release the key on the device state)
+
+		During a profile swap, all pressed keys will "swap"
+		A "swap" releases the original key mapping and presses of the new key mapping, only if both mappings are CTRL_KEY
+		All non-'CTRL_KEY -> CTRL_KEY' key indexes will be set in kdata->ignore_keylist (plus profile swap key)
+		kdata->shift_keylist will be reset
+		Set 'shift' to 0 (or we could enter "permanent" hypershift mode)
+
+		For a hypershift action
+		If 'shift' and the target profile are the same, we're big chillin
+		Else, perform a release -> ignore of everything in shift_keylist and reset shift_keylist
+		Set 'shift' to the action data (hs profile num) and 'revert' to the current profile num
+		Then, set the profile number to the same as 'shift'
+		(In most cases, shift_keylist will be empty here)
+		(If we have two different hs keys on the same profile, the rare case may occur that we want to hold a key from one hs and enable another hs)
+		(This could be resolved by swapping shift_keylist to a list of pairs with key, profile in which it was pressed)
+		(In this case, allowing for two different hypershift profiles surpasses the default synapse functionality)
+
+		(bitmaps are not updated at the same time as map lookup)
+	/*/
+	
+	// struct device* parent = &data->parent;
+	u8 profile_num = data->profile;				// handle_event() ensures nonzero
+	struct kbddata* kdata = data->idata;
+	struct profile* map = kdata->maps;
+	struct bind action;
+	u8 hs_bit = 0;
 
 	// Look up keybind in device profile
-	map = kdata->maps + profile_num - 1;
-	action = map->keymap[key];
+	// NOTE: kdata->shift == 0 means only that we guarantee the shift_keylist bitmap is "empty" so resolve to base profile action
+	// TODO: This will probably move to a subroutine
+	if (ev->state || !kdata->shift) map += profile_num - 1;
+	else {
+		hs_bit = kdata->shift_keylist.bytes[ev->idx / 8] & 1 << (ev->idx % 8);
+		map += (!!hs_bit) * kdata->shift + (!hs_bit) * profile_num - 1;
+	}
+	action = map->keymap[ev->idx];
 
-	// Set device data if hypershift or profile swap
+	printk(KERN_INFO "Action: 0x%02x, 0x%02x\n", action.type, action.data);
+
+	// OLD STUFF -- Set device data if hypershift or profile swap
 	// NOTE: Possible to arrive here with the release of a hypershift key that isn't the active key (crackhead keymap scenario)
-	switch (action.type) {
+	/*/ switch (action.type) {
 	case CTRL_PROFILE:
 		// Profile key release is processed as a shift release, so "shift" to no profile
 		profile_num = 0;
@@ -523,14 +524,42 @@ struct bind key_event(struct kbddata* kdata, u8 profile_num, int* pstate, u8* ev
 			kdata->shift = key;						// New HS/profile was pressed
 			kdata->prev_profile = profile_num;		// Handle return event
 		} else action.type = CTRL_NOP;				// Ignore release 
+	} //*/
+
+	// Process and report the mapped keybind action accordingly
+	switch (action.type) {
+	case CTRL_KEY:
+		input_report_key(data->input, action.data, ev->state);
+		break;
+
+	/*/
+	case CTRL_SHIFT:
+		// Shift mode only supported by keyboard buttons (mwheel could technically work but holy scuffed)
+		if (data->inum != KBD_INUM) break;
+		if (action.data) swap_profile_kbd(dev->dev.parent, data, action.data);
+		break;
+
+	case CTRL_PROFILE:
+		// Profile swaps from within hypershift mode will reset hypershift mode
+		// NOTE: Only key presses will make it here (else we'd also check for state in our swap_profile_kbd condition)
+
+		// TODO: Figure out mouse support for this (probably involves linking to the other device data?)
+		if (data->inum != KBD_INUM) break;
+		if (action.data) swap_profile_kbd(dev->dev.parent, data, action.data);
+		break;
+
+	//*/
+	case CTRL_DEBUG: break;
 	}
-	
-	return action;
+
+	// Update hypershift keystate bitmap
+	if (ev->state && profile_num == kdata->shift) kdata->shift_keylist.bytes[ev->idx / 8] |= 1 << (ev->idx % 8);
+	else if (!ev->state && hs_bit) kdata->shift_keylist.bytes[ev->idx / 8] ^= hs_bit;
 }
 
 // Swap keyboard profiles (change profile number and handle currently pressed keys)
 // NOTE: This should only be called when wrapped in a device mutex lock!
-void swap_profile_kbd(struct device* parent, struct drvdata* data, u8 profile_num) {
+void swap_profile_kbd (struct device* parent, struct drvdata* data, u8 profile_num) {
 	u8* idx;
 	u8 pressed;
 	u8 profile_num_prev;
@@ -571,14 +600,14 @@ void swap_profile_kbd(struct device* parent, struct drvdata* data, u8 profile_nu
 
 	// Swap keypresses (ignore key available in kdata->shift)
 	// Do nothing if device was diabled and subsequently enabled (profile 0 -> profile any)
-	if (!profile_num || !profile_num_prev) return;						
+	if (true || !profile_num || !profile_num_prev) return;		// (DEBUG -> true clause)
 
 	keymap_old = kdata->maps[profile_num_prev - 1].keymap;
 	keymap_new = kdata->maps[profile_num - 1].keymap;
 
 	for (idx = keys; *idx != 0; ++idx) {
-		// printk(KERN_INFO "Checking key: 0x%02x\n", *idx);		// (DEBUG)
-		pressed = kdata->state.bytes[*idx / 8] & 1 << (*idx % 8);
+		printk(KERN_INFO "TODO: Checking key: 0x%02x\n", *idx);		// (DEBUG)
+		pressed = 0; // kdata->state.bytes[*idx / 8] & 1 << (*idx % 8);
 		if (!pressed || *idx == ignore_key) continue;
 
 		key_old = keymap_old[*idx];
@@ -602,7 +631,7 @@ void swap_profile_kbd(struct device* parent, struct drvdata* data, u8 profile_nu
 
 // -- DEVICE COMMANDS --
 // Log the a razer report struct to the kernel (for debugging)
-void log_report(struct razer_report* report) {
+void log_report (struct razer_report* report) {
 	char* status_str;
 	char* params_str;
 	int i;
@@ -658,7 +687,7 @@ void log_report(struct razer_report* report) {
 
 // Calculate report checksum (razer_checksum)
 // (Taken from OpenRazer driver)
-unsigned char report_checksum(struct razer_report* report) {
+unsigned char report_checksum (struct razer_report* report) {
 	unsigned char ck = 0;
 	unsigned char* bytes = (unsigned char*) report;
 
@@ -669,7 +698,7 @@ unsigned char report_checksum(struct razer_report* report) {
 // Create a razer report data type
 // Specifically for use in requesting data from the device
 // (Modified from OpenRazer)
-struct razer_report init_report(unsigned char class, unsigned char id, unsigned char size) {
+struct razer_report init_report (unsigned char class, unsigned char id, unsigned char size) {
 	struct razer_report report = { 0 };
 	// Static values
 	report.tr_id.id = 0xFF;
@@ -694,7 +723,7 @@ struct razer_report init_report(unsigned char class, unsigned char id, unsigned 
 // TODO: Change me!
 //     ^^should return a status and pass in a pointer to req and a pointer to out
 //	   ^^if out is NULL, don't request the output from the driver
-struct razer_report send_command(struct device* dev, struct razer_report* req, int* cmd_errno) {
+struct razer_report send_command (struct device* dev, struct razer_report* req, int* cmd_errno) {
 	int received = -1;		// Amount of data transferred (result of usb_control_msg)
 	char* request = NULL;	// razer_report containing the command parameters (i.e. get layout/set lighting pattern/etc)
 
@@ -722,7 +751,7 @@ struct razer_report send_command(struct device* dev, struct razer_report* req, i
 	//  0X21 --> USB_TYPE_CLASS | USB_RECIP_INTERFACE | USB_DIR_OUT
 	// (Looks like this can also be done with usb_fill_control_urb followed by usb_submit_urb functions)
 	received = usb_control_msg(tartarus, usb_sndctrlpipe(tartarus, 0), 0x09, 0X21, 0x300, 0x01, request, REPORT_LEN, USB_CTRL_SET_TIMEOUT);
-	usleep_range(WAIT_MIN, WAIT_MAX);
+	usleep_range(600, 800);
 	if (received != REPORT_LEN) {
 		printk(KERN_WARNING "HID Tartarus: Device data transfer failed\n");
 		if (cmd_errno) *cmd_errno = (received < 0) ? received : -EIO;
@@ -750,7 +779,7 @@ send_command_exit:
 	return response;
 }
 
-void set_profile_led_complete(struct urb* ctrl) {
+void set_profile_led_complete (struct urb* ctrl) {
 	if (ctrl->status) printk(KERN_WARNING "HID Tartarus: Failed to send control URB\n");
 
 	if (ctrl->context) kfree(ctrl->context);
@@ -760,7 +789,7 @@ void set_profile_led_complete(struct urb* ctrl) {
 // Asynchronous device control request
 // Use this to change profile LEDs
 // dev -> Tartarus itself (idev->parent)
-void set_profile_led(struct device* dev, u8 led_idx, u8 state) {
+void set_profile_led (struct device* dev, u8 led_idx, u8 state) {
 	struct usb_interface* intf = to_usb_interface(dev);
 	struct usb_device* usbdev = interface_to_usbdev(intf);
 
@@ -791,11 +820,10 @@ void set_profile_led(struct device* dev, u8 led_idx, u8 state) {
 	req->data[2] = !!state;
 	req->cksum = report_checksum(req);
 
-	// TODO: Error handling
 	ctrl = usb_alloc_urb(0, GFP_ATOMIC);
 	if (!ctrl) {
 		kfree(context);
-		return;
+		return;					// TODO: Graceful errors
 	}
 	
 	usb_fill_control_urb(ctrl, usbdev, usb_sndctrlpipe(usbdev, 0), (unsigned char*) setup, req, REPORT_LEN, set_profile_led_complete, context);
