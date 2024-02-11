@@ -246,7 +246,7 @@ void log_event (u8*, int, u8);
 int process_event_kbd (struct event*, u8*, u8*, int);
 void resolve_event_kbd (struct event*, struct drvdata*);
 u8 lookup_profile_kbd (struct kbddata*, struct bind*, u8, u8, u8);
-void swap_profile_kbd (struct drvdata*, u8);
+void swap_profile_kbd (struct drvdata*, u8, struct keystate*);
 // int process_event_mouse ( ... );
 // void resolve_event_mouse ( ... );
 // void swap_profile_mouse ( ... );

@@ -498,11 +498,8 @@ void resolve_event_kbd (struct event* ev, struct drvdata* data) {
 		(In this case, allowing for two different hypershift profiles surpasses the default synapse functionality)
 	/*/
 	
-	// struct device* parent = &data->parent;
-	// u8 profile_num = data->profile;				// NOTE: handle_event() ensures nonzero
 	struct kbddata* kdata = data->idata;
-	// u8 base = kdata->revert ? kdata->revert : data->profile;
-	u8 base = data->profile;
+	u8 base = data->profile;	// NOTE: handle_event() ensures nonzero
 	
 	struct bind action;
 	u8 hs_bit = lookup_profile_kbd (kdata, &action, base, ev->idx, ev->state);
@@ -536,27 +533,25 @@ void resolve_event_kbd (struct event* ev, struct drvdata* data) {
 		// New thought: base 1, hs 2, which has swap to 3 -- Intuitive solution is to keep base as 1, release any HS keys in 2
 		// Add an int for "pressed hs keys" so that the revert profile is called only when "pressed hs keys" becomes zero
 		// ^^OR: Simply do the same as a profile swap and move the old HS key to "ignore keys"
-		
-		// No shift num or same shift num means bing chillin
-		// if (shift && shift != action.data) {
-			// This block runs when a user has multiple HS profiles on the same map
-			// TODO: "Swap" hypershift keys (every new press will be ignored so we can skip updating the ignore bitmap)
-		// }
 
-		// Hypershift release
+		// -- Hypershift release --
 		if (!ev->state) {
 			if (kdata->revert) set_profile(data, kdata->revert);
-			// kdata->revert = 0; // Do not set this with the new version
+			kdata->revert = 0;
 			return;
 		}
 
-		// Hypershift press
-		kdata->revert = base;
-		kdata->shift = action.data;
+		// -- Hypershift press --
+		// Release all keys in hypershift bitmap when swapping to a different profile
+		if (kdata->shift && kdata->shift != action.data) swap_profile_kbd(data, 0, &kdata->shift_keylist);
+
+		// Hypershift -> hypershift will not override original profile
+		// NOTE: Optional in current implementation to reset 'revert' as only a profile change would change the base map
+		if (!kdata->revert) kdata->revert = base;
 		
+		kdata->shift = action.data;
 		set_profile(data, action.data);
 
-		// swap_profile_kbd(dev->dev.parent, data, action.data);
 		break;
 
 	case CTRL_PROFILE:
@@ -565,7 +560,7 @@ void resolve_event_kbd (struct event* ev, struct drvdata* data) {
 		if (!ev->state) return;		// Swap to a break if we end up needing post-processing
 
 		// NOTE: Ignore bit gets set within the swap_profile routine since action_release is CTRL_PROFILE
-		swap_profile_kbd(data, action.data);
+		swap_profile_kbd(data, action.data, NULL);
 		set_profile(data, action.data);
 
 		kdata->shift = 0;
@@ -625,9 +620,10 @@ u8 lookup_profile_kbd (struct kbddata* kdata, struct bind* action, u8 base, u8 k
 
 // Swap keypresses across profiles
 // profile -> Profile number to change to ; 0 -> release keys only
+// whitelist -> If not NULL, bitmap of keys to exclusively consider
 // TODO: Because of multiple actions in one event, it is currently possible to have a rare double-press when the 
 //       "pressed but not processed" key is released, pressed in the new profile, and then pressed in the new profile for real
-void swap_profile_kbd (struct drvdata* data, u8 profile) {
+void swap_profile_kbd (struct drvdata* data, u8 profile, struct keystate* whitelist) {
 	struct kbddata* kdata = data->idata;
 	
 	u8* keylist = kdata->keylist;	// Do not modify!
@@ -644,6 +640,7 @@ void swap_profile_kbd (struct drvdata* data, u8 profile) {
 	for (i = 2; i < KEYLIST_LEN; ++i) {
 		if (!(key = keylist[i])) return;
 		if (ignore_kl->bytes[key / 8] & 1 << (key % 8)) continue;
+		if (whitelist && !(whitelist->bytes[key / 8] & 1 << (key % 8))) continue;
 
 		// NOTE: hs_bit used to unset a bit from the hypershift bitmap
 		// Currently, we could just replace the entire map at the end of this operation instead
