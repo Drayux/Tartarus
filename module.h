@@ -237,6 +237,7 @@ static int mapping_bypass (struct hid_device* hdev, struct hid_input* hidinput, 
 static ssize_t profile_num_show (struct device*, struct device_attribute*, char*);
 static ssize_t profile_num_store (struct device*, struct device_attribute*, const char*, size_t);
 
+static ssize_t profile_count (struct device*, struct device_attribute*, char*);
 static ssize_t profile_show (struct device*, struct device_attribute*, char*);
 static ssize_t profile_store (struct device*, struct device_attribute*, const char*, size_t);
 
@@ -252,7 +253,7 @@ void swap_profile_kbd (struct drvdata*, u8, struct keystate*);
 // void swap_profile_mouse ( ... );
 void set_profile (struct drvdata*, u8);
 
-void swap_profile_kbd_old (struct device*, struct drvdata*, u8);
+// void swap_profile_kbd_old (struct device*, struct drvdata*, u8);
 
 // DEVICE COMMANDS
 void log_report (struct razer_report*);
@@ -264,6 +265,7 @@ void set_profile_led_complete (struct urb*);
 
 
 // DEVICE ATTRIBUTES (connects functions to udev events)
+static DEVICE_ATTR(profile_count, 0444, profile_count, NULL);
 static DEVICE_ATTR(profile_num, 0644, profile_num_show, profile_num_store);		// static DEVICE_ATTR_RW(profile_num);
 static DEVICE_ATTR(profile, 0644, profile_show, profile_store);
 

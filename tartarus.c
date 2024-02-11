@@ -54,9 +54,9 @@ static int device_probe (struct hid_device* dev, const struct hid_device_id* id)
 		//*/
 		
 		// Create device files
-		// TODO: Needs proper error handling (currently will leak idata)
-		if(device_create_file(&dev->dev, &dev_attr_profile_num)) return -1;
-		if(device_create_file(&dev->dev, &dev_attr_profile)) return -1;
+		if((status = device_create_file(&dev->dev, &dev_attr_profile_count))) goto probe_fail;
+		if((status = device_create_file(&dev->dev, &dev_attr_profile_num))) goto probe_fail;
+		if((status = device_create_file(&dev->dev, &dev_attr_profile))) goto probe_fail;
 
 		break;
 		
@@ -80,6 +80,7 @@ static int device_probe (struct hid_device* dev, const struct hid_device_id* id)
 	data->inum = inum;
 	data->idata = idata;
 	data->parent = parent;
+	
 	hid_set_drvdata(dev, data);
 
 	// Begin device communication
@@ -159,6 +160,7 @@ static void device_disconnect (struct hid_device* dev) {
 		return;
 	case KBD_INUM:
 		// Keyboard
+		device_remove_file(&dev->dev, &dev_attr_profile_count);
 		device_remove_file(&dev->dev, &dev_attr_profile_num);
 		device_remove_file(&dev->dev, &dev_attr_profile);
 		break;
@@ -244,6 +246,11 @@ static int handle_event (struct hid_device* dev, struct hid_report* report, u8* 
 	return 0;
 }
 
+// The number of profiles the device was compiled to support
+static ssize_t profile_count (struct device* dev, struct device_attribute* attr, char* buf) {
+	return snprintf(buf, 4, "%d", PROFILE_COUNT);
+}
+
 // NOTE: buf points to an array of PAGE_SIZE (or 4096 bytes on x86)
 static ssize_t profile_num_show (struct device* dev, struct device_attribute* attr, char* buf) {
 	struct drvdata* data = dev_get_drvdata(dev);
@@ -266,9 +273,16 @@ static ssize_t profile_num_store (struct device* dev, struct device_attribute* a
 		return len;
 	}
 
+	// Clamp the profile number to acceptable values
+	if (profile) profile = (profile - 1) % PROFILE_COUNT + 1;
+
 	mutex_lock(&data->lock);
 	switch (data->inum) {
-		case KBD_INUM: swap_profile_kbd_old(dev->parent, data, profile); break;
+	case KBD_INUM: 
+		// Release all (not already ignored) keys
+		swap_profile_kbd(data, 0, NULL);
+		set_profile(data, profile);
+		break;
 	}
 	mutex_unlock(&data->lock);
 	
@@ -335,7 +349,7 @@ static ssize_t profile_store (struct device* dev, struct device_attribute* attr,
 		// TODO: If we change the structure of a profile, we want to asser that len is at least long enough
 		// 		 for essential metadata information (like which lights to use for example)
 		memcpy(profile_ptr, buf, bytes);
-		memset(profile_ptr + bytes, 0, sizeof(struct profile) - bytes);
+		memset((char*) profile_ptr + bytes, 0, sizeof(struct profile) - bytes);
 		printk(KERN_INFO "HID Tartarus: Wrote %d bytes to keyboard profile %d\n", bytes, profile_num);
 		break;
 
@@ -505,9 +519,9 @@ void resolve_event_kbd (struct event* ev, struct drvdata* data) {
 	u8 hs_bit = lookup_profile_kbd (kdata, &action, base, ev->idx, ev->state);
 	u8 ig_bit = kdata->ignore_keylist.bytes[ev->idx / 8] & 1 << (ev->idx % 8);
 
-	// (DEBUG)
+	/*/ (DEBUG)
 	printk(KERN_INFO "EVENT: 0x%02x -> 0x%02x, 0x%02x [%s]%s\n", ev->idx, action.type, action.data, 
-		ev->state ? "DOWN" : "UP", hs_bit ? " (HS)" : "");
+		ev->state ? "DOWN" : "UP", hs_bit ? " (HS)" : ""); //*/
 
 	// Remove hypershift state bit
 	// NOTE: This is for either press state as down sends the non-HS mapping anyway
@@ -543,7 +557,8 @@ void resolve_event_kbd (struct event* ev, struct drvdata* data) {
 
 		// -- Hypershift press --
 		// Release all keys in hypershift bitmap when swapping to a different profile
-		if (kdata->shift && kdata->shift != action.data) swap_profile_kbd(data, 0, &kdata->shift_keylist);
+		if (kdata->shift && kdata->shift != action.data)
+			swap_profile_kbd(data, 0, &kdata->shift_keylist);
 
 		// Hypershift -> hypershift will not override original profile
 		// NOTE: Optional in current implementation to reset 'revert' as only a profile change would change the base map
@@ -671,8 +686,9 @@ void swap_profile_kbd (struct drvdata* data, u8 profile, struct keystate* whitel
 	}
 }
 
-// TODO: Set device profile number and lights
+// Set device profile number and lights
 void set_profile (struct drvdata* data, u8 profile) {
+	// TODO: Only change LEDs if KBD_INUM
 	set_profile_led(data, 0x0C, profile & 0x04);		// Red
 	set_profile_led(data, 0x0D, profile & 0x02);		// Green
 	set_profile_led(data, 0x0E, profile & 0x01);		// Blue
@@ -681,7 +697,7 @@ void set_profile (struct drvdata* data, u8 profile) {
 }
 
 // Swap keyboard profiles (change profile number and handle currently pressed keys)
-// NOTE: This should only be called when wrapped in a device mutex lock!
+/*/ NOTE: This should only be called when wrapped in a device mutex lock!
 void swap_profile_kbd_old (struct device* parent, struct drvdata* data, u8 profile_num) {
 	u8* idx;
 	u8 pressed;
@@ -749,7 +765,7 @@ void swap_profile_kbd_old (struct device* parent, struct drvdata* data, u8 profi
 		// if (key_old.type == CTRL_KEY) input_report_key(data->input, key_old.data, 0x00);	// Release key
 		// if (key_new.type == CTRL_KEY) input_report_key(data->input, key_new.data, 0x01);	// Press key
 	}
-}
+} //*/
 
 
 // -- DEVICE COMMANDS --

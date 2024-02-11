@@ -29,11 +29,37 @@ The goal of this driver is to recreate some of the primary functionality that Ra
 
 Macros are the primary feature that I've omitted. Ultimately, I don't use them personally so the motivation was limited, and functions with an indefinite run duration felt..._ambitious_ for kernel space. As such, I propose that the device should send the KEY_MACRO_X event to the kernel, where the parsed macro can be handled by its own process in user space. **(TODO)**  
 
+NOTE: Being a WIP, there are still some funny quirks you may notice:  
+- The device defaults to a "debug profile" where buttons 01 - 05 will swap the respective profile  
+- The default maps at profiles 2 and 3 are the maps that I regularly use for gaming, which may prove unusual to many  
+- The scroll wheel does not work at all as it is some of the final functionality that I plan to add  
+
 ## Requirements
 - linux >=3.0 (?) + standard build tools (linux-headers, gcc, make, git, etc.)
 - _DKMS_ : **TODO** Chosen method of module installation (There exist other ways that I do not yet know, feel free to make a PR!)
 - python >= 3.11 : Allows profile customization GUI
-- _<service system> : **TODO** I plan to eventually provide openrc/dinit service files for the user-space profile tool
+- _<service system>_ : **TODO** I plan to eventually provide openrc/dinit service files for the user-space profile tool
+
+## SysFS
+The keyboard interface (inum 0) will generate three sysfs entries: `profile_count`, `profile_num`, and `profile`  
+All of these entries are found under `/sys/bus/hid/drivers/hid-tartarus/<dev path>/`  
+
+### `profile_count`
+> READ ONLY  
+The number of profiles supported by the device is determined at compile-time by the macro `PROFILE_COUNT` in `module.h`  
+`cat profile_count` will display this value (currently 8 by default)  
+
+### `profile_num`
+> READ/WRITE  
+Represents the active device profile (base 10)  
+Use `echo -n "3" > profile_num` to set the device to profile 3; The function will perform bound checking  
+
+### `profile`
+> READ/WRITE  
+Represents the data of the active device profile (raw)  
+The profile structure will likely evolve from the time of writing this, however it is currently an array of 512 bytes: every pair of 2 bytes represents one keybind within a profile, indexed by the raw key value  
+Reading/writing from this file will output/overwrite the profile of the ACTIVE profile, respectively  
+`cat profile | hexdump -C` is my preferred means of viewing this  
 
 ## Profiles
 **TODO:** Needs an explanation of the bind types, values, and many pretty pictures  
