@@ -64,9 +64,9 @@
 
 // BINDS
 #define CTRL_NOP		0x00		// No key action
-#define CTRL_KEY     	0x01		// Keyboard button action
-#define CTRL_SHIFT      0x02		// Hypershift mode action	(swap profile while held)
-#define CTRL_PROFILE   	0x03		// Change profile action	(swap profile upon press)
+#define CTRL_KEY     	0x01		// Keyboard button
+#define CTRL_SHIFT      0x02		// Hypershift mode	(swap profile while held)
+#define CTRL_PROFILE   	0x03		// Change profile	(swap profile upon press)
 #define CTRL_SWKEY		0x04		// TODO: Key that will be "swapped" upon hypershift state change
 #define CTRL_SCRIPT		0x05		// TODO: Execute script relative to the current user's home dir
 #define CTRL_MACRO		0x06		// TODO: Play macro action 		(playback list of key actions)
@@ -101,6 +101,7 @@ struct drvdata {
 	u8 profile;					// Active profile number (keyboard and mouse have one each)
 	u8 inum;					// Interface number : 0 -> KB, 1 -> RGB???, 2 -> Mouse (wheel)
 	void* idata;				// Interface data (keyboard, mouse, etc.)
+	struct usb_device* parent;	// Parent device ref (for sending URBs)
 	struct input_dev* input;	// Input device ref (for sending inputs to kernel)
 	struct mutex lock;
 };
@@ -113,7 +114,7 @@ struct kbddata {
 	
 	u8 shift;							// Current hypershift profile number
 	u8 revert;							// Hypershift return profile number ; 0 -> NOP
-
+	
 	// Device profiles numbers range 1-8, corresponding to indexes 0-7 ; 0 -> Device disabled
 	struct profile {
 		struct bind keymap [KEYMAP_LEN];
@@ -243,20 +244,23 @@ static ssize_t profile_store (struct device*, struct device_attribute*, const ch
 // INPUT PROCESSING
 void log_event (u8*, int, u8);
 int process_event_kbd (struct event*, u8*, u8*, int);
-// int process_event_mouse ( ... );
 void resolve_event_kbd (struct event*, struct drvdata*);
+u8 lookup_profile_kbd (struct kbddata*, struct bind*, u8, u8, u8);
+void swap_profile_kbd (struct drvdata*, u8);
+// int process_event_mouse ( ... );
 // void resolve_event_mouse ( ... );
-void swap_profile_kbd (struct device*, struct drvdata*, u8);
 // void swap_profile_mouse ( ... );
+void set_profile (struct drvdata*, u8);
 
+void swap_profile_kbd_old (struct device*, struct drvdata*, u8);
 
 // DEVICE COMMANDS
 void log_report (struct razer_report*);
 unsigned char report_checksum (struct razer_report*);
 struct razer_report init_report (unsigned char, unsigned char, unsigned char);
 struct razer_report send_command (struct device*, struct razer_report*, int*);
+void set_profile_led (struct drvdata*, u8, u8);
 void set_profile_led_complete (struct urb*);
-void set_profile_led (struct device*, u8, u8);
 
 
 // DEVICE ATTRIBUTES (connects functions to udev events)
