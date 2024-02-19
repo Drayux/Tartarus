@@ -67,9 +67,9 @@
 #define CTRL_KEY     	0x01		// Keyboard button
 #define CTRL_SHIFT      0x02		// Hypershift mode	(swap profile while held)
 #define CTRL_PROFILE   	0x03		// Change profile	(swap profile upon press)
-#define CTRL_SWKEY		0x04		// TODO: Key that will be "swapped" upon hypershift state change
+#define CTRL_MACRO		0x04		// TODO: Play macro action 		(playback list of key actions)
 #define CTRL_SCRIPT		0x05		// TODO: Execute script relative to the current user's home dir
-#define CTRL_MACRO		0x06		// TODO: Play macro action 		(playback list of key actions)
+#define CTRL_SWKEY		0x06		// TODO: Key that will be "swapped" upon hypershift state change
 #define CTRL_MMOV		0x07		// TODO: Move the mouse
 #define CTRL_MWHEEL		0x08		// TODO: Mouse wheel action
 #define CTRL_DEBUG		0xFF		// (DEBUG)
@@ -234,10 +234,12 @@ static int handle_event (struct hid_device*, struct hid_report*, u8*, int);
 static int mapping_bypass (struct hid_device* hdev, struct hid_input* hidinput, struct hid_field* field,
 			struct hid_usage* usage, unsigned long** bit, int* max) { return -1; }
 
+static ssize_t intf_type (struct device*, struct device_attribute*, char*);
+static ssize_t profile_count (struct device*, struct device_attribute*, char*);
+
 static ssize_t profile_num_show (struct device*, struct device_attribute*, char*);
 static ssize_t profile_num_store (struct device*, struct device_attribute*, const char*, size_t);
 
-static ssize_t profile_count (struct device*, struct device_attribute*, char*);
 static ssize_t profile_show (struct device*, struct device_attribute*, char*);
 static ssize_t profile_store (struct device*, struct device_attribute*, const char*, size_t);
 
@@ -265,6 +267,7 @@ void set_profile_led_complete (struct urb*);
 
 
 // DEVICE ATTRIBUTES (connects functions to udev events)
+static DEVICE_ATTR(intf_type, 0444, intf_type, NULL);
 static DEVICE_ATTR(profile_count, 0444, profile_count, NULL);
 static DEVICE_ATTR(profile_num, 0644, profile_num_show, profile_num_store);		// static DEVICE_ATTR_RW(profile_num);
 static DEVICE_ATTR(profile, 0644, profile_show, profile_store);

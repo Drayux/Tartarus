@@ -72,6 +72,9 @@ static int device_probe (struct hid_device* dev, const struct hid_device_id* id)
 		break;
 	}
 
+	// Interface type device file
+	if((status = device_create_file(&dev->dev, &dev_attr_intf_type))) goto probe_fail;
+
 	data = kzalloc(sizeof(struct drvdata), GFP_KERNEL);
 	if ((status = data ? 0 : -ENOMEM)) goto probe_fail;
 
@@ -160,6 +163,10 @@ static void device_disconnect (struct hid_device* dev) {
 		return;
 	case KBD_INUM:
 		// Keyboard
+
+		// Try to turn off the profile lights before disconnecting
+		set_profile(data, 0);
+		
 		device_remove_file(&dev->dev, &dev_attr_profile_count);
 		device_remove_file(&dev->dev, &dev_attr_profile_num);
 		device_remove_file(&dev->dev, &dev_attr_profile);
@@ -169,6 +176,9 @@ static void device_disconnect (struct hid_device* dev) {
 		// device_remove_file(&dev->dev, &dev_attr_profile);
 		break;
 	}
+
+	// Interface type device file
+	device_remove_file(&dev->dev, &dev_attr_intf_type);
 
 	// Stop the device 
 	hid_hw_stop(dev);
@@ -246,15 +256,31 @@ static int handle_event (struct hid_device* dev, struct hid_report* report, u8* 
 	return 0;
 }
 
+// The type of the interface (used for python scripts)
+// TODO: There has to be a better way to detect which interface is which from userspace, right??
+static ssize_t intf_type (struct device* dev, struct device_attribute* attr, char* buf) {
+	char* type = NULL;
+	struct drvdata* data = dev_get_drvdata(dev);
+	
+	switch (data->inum) {
+		case EXT_INUM: type = "EXT"; break;
+		case KBD_INUM: type = "KBD"; break;
+		case MOUSE_INUM: type = "MOUSE"; break;
+		default: return 0;
+	}
+
+	return snprintf(buf, 8, "%s\n", type);
+}
+
 // The number of profiles the device was compiled to support
 static ssize_t profile_count (struct device* dev, struct device_attribute* attr, char* buf) {
-	return snprintf(buf, 4, "%d", PROFILE_COUNT);
+	return snprintf(buf, 8, "%d\n", PROFILE_COUNT);
 }
 
 // NOTE: buf points to an array of PAGE_SIZE (or 4096 bytes on x86)
 static ssize_t profile_num_show (struct device* dev, struct device_attribute* attr, char* buf) {
 	struct drvdata* data = dev_get_drvdata(dev);
-	return snprintf(buf, 4, "%d", data->profile); 
+	return snprintf(buf, 8, "%d\n", data->profile); 
 }
 
 static ssize_t profile_num_store (struct device* dev, struct device_attribute* attr, const char* buf, size_t len) {
@@ -332,7 +358,7 @@ static ssize_t profile_store (struct device* dev, struct device_attribute* attr,
 	// struct mousedata* mdata;
 	struct bind* profile_ptr;
 	u8 profile_num;
-	u8 bytes = 0;
+	size_t bytes = 0;
 	
 	mutex_lock(&data->lock);
 	switch (data->inum) {
@@ -346,11 +372,11 @@ static ssize_t profile_store (struct device* dev, struct device_attribute* attr,
 
 		profile_ptr = kdata->maps[profile_num - 1].keymap;
 
-		// TODO: If we change the structure of a profile, we want to asser that len is at least long enough
+		// TODO: If we change the structure of a profile, we want to assert that len is at least long enough
 		// 		 for essential metadata information (like which lights to use for example)
 		memcpy(profile_ptr, buf, bytes);
 		memset((char*) profile_ptr + bytes, 0, sizeof(struct profile) - bytes);
-		printk(KERN_INFO "HID Tartarus: Wrote %d bytes to keyboard profile %d\n", bytes, profile_num);
+		printk(KERN_INFO "HID Tartarus: Wrote %lu bytes to keyboard profile %d\n", bytes, profile_num);
 		break;
 
 	case MOUSE_INUM:
@@ -359,7 +385,7 @@ static ssize_t profile_store (struct device* dev, struct device_attribute* attr,
 	}
 
 	mutex_unlock(&data->lock);
-	return bytes;
+	return len;		// Using bytes here means it will read 512 and then start over with the next 512 and so on until all data is consumed
 }
 
 
@@ -620,7 +646,7 @@ u8 lookup_profile_kbd (struct kbddata* kdata, struct bind* action, u8 base, u8 k
 		else if (base == kdata->shift) idx = kdata->revert;
 	}
 
-	printk(KERN_INFO "Base: %d, hs_bit: 0x%02x, shift: %d, revert: %d --> idx: %d\n", base, hs_bit, kdata->shift, kdata->revert, idx);
+	// printk(KERN_INFO "Base: %d, hs_bit: 0x%02x, shift: %d, revert: %d --> idx: %d\n", base, hs_bit, kdata->shift, kdata->revert, idx);
 
 	// Idx should be at least 1 ; 0 means to take no action
 	if (!idx) {
