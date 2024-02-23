@@ -125,7 +125,13 @@ static int input_config (struct hid_device* dev, struct hid_input* input) {
 		// Keyboard (https://elixir.bootlin.com/linux/v6.7/source/drivers/input/input.c#L432)
 		// KEYCODES: https://elixir.bootlin.com/linux/v6.7/source/include/uapi/linux/input-event-codes.h#L65
 		set_bit(EV_KEY, input_dev->evbit);
+
+		// Regular keys
 		for (int i = 1; i <= 248; ++i) set_bit(i, input_dev->keybit);
+
+		// Macro keys
+		for (int i = 0x290; i <= 0x2AD; ++i) set_bit(i, input_dev->keybit);
+		for (int i = 0x2B0; i <= 0x2b5; ++i) set_bit(i, input_dev->keybit);
 
 		// (DEBUG)
 		// printk(KERN_INFO "Device pointers : Input -> %p , Device %p , Parent %p\n", &input->input->dev.parent, dev->dev.parent, dev->dev.parent->parent);
@@ -566,14 +572,11 @@ void resolve_event_kbd (struct event* ev, struct drvdata* data) {
 		input_report_key(data->input, action.data, ev->state);
 		break;
 
-	case CTRL_SHIFT:
-		// TODO: Nested hypershift events are weird
-		// ^^if target is same as current, then do nothing (maybe, the intuitive solution is that both keys should be released to revert)
-		// ^^alternatively we could still set revert so it behaves like a profile swap...
-		// New thought: base 1, hs 2, which has swap to 3 -- Intuitive solution is to keep base as 1, release any HS keys in 2
-		// Add an int for "pressed hs keys" so that the revert profile is called only when "pressed hs keys" becomes zero
-		// ^^OR: Simply do the same as a profile swap and move the old HS key to "ignore keys"
+	case CTRL_MACRO:
+		input_report_key(data->input, action.data + 0x28F, ev->state);
+		break;
 
+	case CTRL_SHIFT:
 		// -- Hypershift release --
 		if (!ev->state) {
 			if (kdata->revert) set_profile(data, kdata->revert);
@@ -625,18 +628,14 @@ u8 lookup_profile_kbd (struct kbddata* kdata, struct bind* action, u8 base, u8 k
 	u8 idx = base;
 	u8 hs_bit = 0;
 
-	/*/ More detailed breakdown of the below conditional
-	if (!pstate) {
-		if (hypershift bit && shift) {
-			idx = kdata->shift;
-			// if not shift, then idx = base too
+	/*/ Psuedocode breakdown of the following conditional
+	if (<key release>) {
+		if (<hypershift key>) {
+			if (<shift profile>) idx = shift;
+			else idx = base;
 		} else {
-			if (hypershift mode) {
-				if (!revert) < do nothing >;
-				idx = revert;
-			} else {
-				idx = base;
-			}
+			if (<hypershift mode>) idx = revert;
+			else idx = base;
 		}
 	} //*/
 
@@ -689,6 +688,7 @@ void swap_profile_kbd (struct drvdata* data, u8 profile, struct keystate* whitel
 		hs_bit = lookup_profile_kbd(kdata, &action_release, data->profile, key, 0);
 		lookup_profile_kbd(kdata, &action_press, profile, key, 0);
 
+		// TODO: Macro keys are technically just keys as well so they could be added here
 		switch (action_release.type) {
 		case CTRL_KEY:
 			if (action_press.type == CTRL_KEY && action_release.data == action_press.data) break;
