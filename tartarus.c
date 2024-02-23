@@ -141,11 +141,13 @@ static int input_config (struct hid_device* dev, struct hid_input* input) {
 	case MOUSE_INUM:
 		// "Mouse"
 		set_bit(EV_REL, input_dev->evbit);
-		set_bit(BTN_MIDDLE, input_dev->keybit);
-		set_bit(BTN_WHEEL, input_dev->keybit);
+		set_bit(REL_WHEEL, input_dev->relbit);
 
-		// Might need this one?
-		// set_bit(REL_WHEEL, input_dev->relbit);
+		// For the middle button
+		// https://elixir.bootlin.com/linux/v6.7.5/source/drivers/hid/usbhid/usbmouse.c#L167
+		set_bit(EV_KEY, input_dev->evbit);
+		set_bit(BTN_MOUSE, input_dev->keybit);
+		set_bit(BTN_MIDDLE, input_dev->keybit);
 
 		break;
 	}
@@ -231,6 +233,7 @@ static int handle_event (struct hid_device* dev, struct hid_report* report, u8* 
 	struct event evlist[KEYLIST_LEN];
 	struct drvdata* data = hid_get_drvdata(dev);
 	struct kbddata* kdata;
+	struct mousedata* mdata;
 
 	if (!data) return -1;				// Device not initalized
 	if (!data->profile) return 0;		// Device is disabled
@@ -249,7 +252,9 @@ static int handle_event (struct hid_device* dev, struct hid_report* report, u8* 
 		break;
 
 	case MOUSE_INUM:
-		// TODO: Mouse events
+		mdata = data->idata;
+		len = process_event_mouse(evlist, raw_event, raw_event_len);
+		for (i = 0; i < len; ++i) resolve_event_mouse(evlist + i, data);
 		break;
 	}
 
@@ -406,7 +411,7 @@ void log_event (u8* data, int len_data, u8 inum) {
 	char* bits_str = kzalloc(9 * sizeof(char), GFP_KERNEL);
 	char* data_str = kzalloc((10 * len_data + 1) * sizeof(char), GFP_KERNEL);
 
-	// I'm kinda cheating but this won't go into the "production build" of the module
+	// I'm kinda cheating here, but this routine won't be used within the release build of the module
 	if (!bits_str || !data_str) {
 		printk(KERN_WARNING "HID Tartarus: Ran out of memory while logging device event (inum: %d)\n", inum);
 		return;
@@ -548,7 +553,7 @@ void resolve_event_kbd (struct event* ev, struct drvdata* data) {
 	u8 base = data->profile;	// NOTE: handle_event() ensures nonzero
 	
 	struct bind action;
-	u8 hs_bit = lookup_profile_kbd (kdata, &action, base, ev->idx, ev->state);
+	u8 hs_bit = lookup_profile_kbd(kdata, &action, base, ev->idx, ev->state);
 	u8 ig_bit = kdata->ignore_keylist.bytes[ev->idx / 8] & 1 << (ev->idx % 8);
 
 	/*/ (DEBUG)
@@ -722,76 +727,51 @@ void set_profile (struct drvdata* data, u8 profile) {
 	data->profile = profile;
 }
 
-// Swap keyboard profiles (change profile number and handle currently pressed keys)
-/*/ NOTE: This should only be called when wrapped in a device mutex lock!
-void swap_profile_kbd_old (struct device* parent, struct drvdata* data, u8 profile_num) {
-	u8* idx;
-	u8 pressed;
-	u8 profile_num_prev;
-	u8 ignore_key;
-	struct kbddata* kdata = data->idata;
+// Extract key events from the raw event
+// Returns the number of elements in the keylist array
+int process_event_mouse (struct event* evlist, u8* raw_event, int raw_event_size) {
+	int evcount = 0;
+	u8 mwheel;
+	
+	// log_event(raw_event, raw_event_size, MOUSE_INUM);
 
-	struct bind* keymap_old;
-	struct bind* keymap_new;
-	struct bind key_old;
-	struct bind key_new;
+	// Memory safety assertions
+	// All events should have a length of 8 bytes
+	if (!raw_event || raw_event_size < 4) return 0;
 
-	// List of all available tartarus keys
-	// TODO: There might be a better way to do this, but this seems the most intiutive
-	u8 keys[] = {
-		RZKEY_01, RZKEY_02, RZKEY_03, RZKEY_04, RZKEY_05,
-		RZKEY_06, RZKEY_07, RZKEY_08, RZKEY_09, RZKEY_10,
-		RZKEY_11, RZKEY_12, RZKEY_13, RZKEY_14, RZKEY_15,
-		RZKEY_16, RZKEY_17, RZKEY_18, RZKEY_19, RZKEY_20,
-		RZKEY_CIRCLE, RZKEY_THMB_L, RZKEY_THMB_U, RZKEY_THMB_R, RZKEY_THMB_D,
-		0
+	// Check the wheel button state (report this every time)
+	// https://elixir.bootlin.com/linux/v6.7.5/source/drivers/hid/usbhid/usbmouse.c#L68
+	evlist[evcount++] = (struct event) {
+		.idx = MWHEEL_BTN,
+		.state = raw_event[0] & MWHEEL_BTN
 	};
 
-	profile_num = profile_num ? (profile_num - 1) % PROFILE_COUNT + 1 : 0;
-	if (data->profile == profile_num) return;
+	// Check the wheel state
+	// NOTE: We could raw dog this one too, but we'll need this format for fancier functionality later
+	if ((mwheel = raw_event[3])) evlist[evcount++] = (struct event) {
+		.idx = MWHEEL_WHEEL,
+		.state = mwheel
+	};
+	
+	return evcount;
+}
 
-	// Update profile state
-	// kdata->prev_profile = profile_num ? data->profile : 0;
-	profile_num_prev = profile_num ? data->profile : 0;
-	data->profile = profile_num;
-	ignore_key = kdata->shift;
-
-	// printk(KERN_INFO "Razer Tartarus: Swapping to profile: %d\n", profile_num);		// (DEBUG)
-
-	// Set profile indicator LEDs
-	// set_profile_led(parent, 0x0C, profile_num & 0x04);		// Red
-	// set_profile_led(parent, 0x0D, profile_num & 0x02);		// Green
-	// set_profile_led(parent, 0x0E, profile_num & 0x01);		// Blue
-
-	// Swap keypresses (ignore key available in kdata->shift)
-	// Do nothing if device was diabled and subsequently enabled (profile 0 -> profile any)
-	if (true || !profile_num || !profile_num_prev) return;		// (DEBUG -> true clause)
-
-	keymap_old = kdata->maps[profile_num_prev - 1].keymap;
-	keymap_new = kdata->maps[profile_num - 1].keymap;
-
-	for (idx = keys; *idx != 0; ++idx) {
-		printk(KERN_INFO "TODO: Checking key: 0x%02x\n", *idx);		// (DEBUG)
-		pressed = 0; // kdata->state.bytes[*idx / 8] & 1 << (*idx % 8);
-		if (!pressed || *idx == ignore_key) continue;
-
-		key_old = keymap_old[*idx];
-		key_new = keymap_new[*idx];
-		if (key_old.data == key_new.data) continue;		// This only works because we only handle normal keys below
-
-		// Only handle normal key events (nested profile swaps/macros/etc ignored)
-		// NOTE: How this behaves is mostly a personal preference
-
-		// Only send key -> key
-		if (key_old.type != CTRL_KEY) continue;
-		input_report_key(data->input, key_old.data, 0x00);
-		if (key_new.type == CTRL_KEY) input_report_key(data->input, key_new.data, 0x01);
-
-		// Always send all keys variation
-		// if (key_old.type == CTRL_KEY) input_report_key(data->input, key_old.data, 0x00);	// Release key
-		// if (key_new.type == CTRL_KEY) input_report_key(data->input, key_new.data, 0x01);	// Press key
+// Report mouse events to the kernel
+void resolve_event_mouse (struct event* event, struct drvdata* data) {
+	u8 state;
+	
+	// printk(KERN_INFO "Mouse event: %d (%d)", event->idx, event->state);		// (DEBUG)
+	
+	switch (event->idx) {
+	case MWHEEL_BTN:
+		input_report_key(data->input, BTN_MIDDLE, event->state);
+		break;
+	case MWHEEL_WHEEL:
+		state = event->state + 1;
+		input_report_rel(data->input, REL_WHEEL, (int) state - 1);
+		break;
 	}
-} //*/
+}
 
 
 // -- DEVICE COMMANDS --
@@ -823,7 +803,7 @@ void log_report (struct razer_report* report) {
 		break;
 	default:
 		status_str = "Unexpected status (0x??)";
-	};
+	}
 	
 	// Command params (data)
 	// Length of param string: 80 * 2 hex chars, + (80 / 2) * 2 spaces + 1 null = 241

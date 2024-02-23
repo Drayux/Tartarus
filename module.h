@@ -60,7 +60,8 @@
 #define MODKEY_SHIFT	0x02		// Bit pattern for the shift key (key 16)
 #define MODKEY_ALT		0x04		// Bit pattern for the alt key (circular thumb button)
 #define MODKEY_MASK		0x40		// Applied to all modkey keycodes (i.e. 0000 0010 (lshift) -> 0100 0010)
-
+#define MWHEEL_BTN		0x04		// Bit pattern for the mouse wheel button
+#define MWHEEL_WHEEL	0x08
 
 // BINDS
 #define CTRL_NOP		0x00		// No key action
@@ -122,6 +123,7 @@ struct kbddata {
 };
 
 struct mousedata {
+	// u8 mwheel_state;					// Value directly from raw event (not clamped)
 	struct mprofile {
 		struct bind keymap [8];
 	} maps [PROFILE_COUNT];
@@ -250,10 +252,10 @@ int process_event_kbd (struct event*, u8*, u8*, int);
 void resolve_event_kbd (struct event*, struct drvdata*);
 u8 lookup_profile_kbd (struct kbddata*, struct bind*, u8, u8, u8);
 void swap_profile_kbd (struct drvdata*, u8, struct keystate*);
-// int process_event_mouse ( ... );
-// void resolve_event_mouse ( ... );
-// void swap_profile_mouse ( ... );
 void set_profile (struct drvdata*, u8);
+int process_event_mouse (struct event*, u8*, int);
+void resolve_event_mouse (struct event*, struct drvdata*);
+// void swap_profile_mouse ( ... );
 
 // void swap_profile_kbd_old (struct device*, struct drvdata*, u8);
 
