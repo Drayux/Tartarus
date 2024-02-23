@@ -1,29 +1,84 @@
 import io
+import os
 import sys
+
+from functools import partial
+
+# I found this the most useful tkinter resource: https://www.pythontutorial.net/tkinter/
 import tkinter as tk
+from tkinter import ttk as ttk
+
+global DRIVERPATH_
+global KBDPATH_
+global MAXPROFILES_
 
 class Bind:
+    # Static methods to get the text of a bind
+    def typeString(_type, shorten = False):
+        match _type:
+            case 0: return "NONE" if shorten else "DISABLE"
+            case 1: return "KEY"
+            case 2: return "SHIFT" if shorten else "HYPERSHIFT"
+            case 3: return "PROFL" if shorten else "PROFILE"
+            case 4: return "MACRO"
+            case 5: return "SCRIPT"
+            case 6: return "SWKEY"
+            case 255: return "DEBUG"
+            case _: return "UNDEF" if shorten else "UNDEFINED"
+
+    # We don't automatically perform this in initalization since self._data can be reassigned by the UI
+    def parseDataStr(self):
+        if not type(self._data) == str: return True
+
+        # Unset data if no keybind
+        if self._type == 0:
+            self._data = 0
+            return True
+
+        # Check the list of string keycodes (only applies to key bind type)
+        elif self._type == 1:
+            idx = -1
+            comp = self._data.upper()
+            for i, string in enumerate(Profile._codes):
+                if string != comp: continue
+                idx = i
+                break
+
+            if idx >= 0:
+                self._data = idx
+                return True
+
+        # Try to convert to hex/decimal
+        try: 
+            self._data = int(self._data, 0)
+            return True
+            
+        except Exception: return False
+
+    # Turns the data value into a more useful format (opposite of parse)
+    def printDataStr(self):
+        if not self.parseDataStr(): return ""
+        match (self._type):
+            case 0: return ""
+            case 1: return Profile._codes[self._data]
+            case 2: return str(self._data)
+            case 3: return str(self._data)
+            case _: return str(self._data)  # TODO
+    
     def __init__(self, _type, _data):
-        self._type = _type  #ord(_type)
+        self._type = _type if type(_type) is int else int(_type, 0)
         self._data = _data  #ord(_data)
 
     def __str__(self):
-        ret = ""
-        match self._type:
-            case 0: ret += "NONE"
-            case 1: ret += "KEY"
-            case 2: ret += "SHIFT"
-            case 3: ret += "PROFILE"
-            case 4: ret += "MACRO"
-            case 5: ret += "SCRIPT"
-            case 6: ret += "SWKEY"
-            case 255: ret += "DEBUG"
-            case other: ret += "UNDEFINED"
-
+        ret = Bind.typeString(self._type)
         ret += " : "
-        ret += hex(self._data)
+        ret += f"'{self._data}'" if type(self._data) is str else hex(self._data)
 
         return ret
+
+    def __eq__(self, other):
+        if self._type == other._type and self._data == other._data: return True
+        return False
 
 class Profile:
     _size = 512     # Update upon modification of profile format
@@ -53,7 +108,7 @@ class Profile:
         "SCALE","KP,",  "HANGE","HANJA","YEN",  "LMETA","RMETA","COMP"
     ]
 
-    # TODO: This could use bounds checking
+    # Populate the profile's data with keybinds parsed from the sysfs buffer
     def load(self, buf, size = 0):
         self.keymap = []
         
@@ -104,19 +159,7 @@ class Profile:
             for j in range(5):
                 key = Profile._keys[key_idx + j]
                 btype = self.keymap[key]._type
-
-                ret += "┃ "
-                match btype:
-                    case 0: ret += "NONE"
-                    case 1: ret += "KEY"
-                    case 2: ret += "SHIFT"
-                    case 3: ret += "PROFL"
-                    case 4: ret += "MACRO"
-                    case 5: ret += "SCRIPT"
-                    case 6: ret += "SWKEY"
-                    case 255: ret += "DEBUG"
-                    case other: ret += "UNDEF"
-                ret += "\t┃\t"
+                ret += f"┃ {Bind.typeString(btype, True)}\t┃\t"
 
             # Row 3 -> bind data
             ret += "\n"
@@ -140,34 +183,251 @@ class Profile:
         return ret
 
 class Editor:
-    def __init__(self):
-        self.activeProfile = 0
+    class ProfileSelect(ttk.Frame):
+        def __init__(self, master, callback):
+            super().__init__(master, style = "ProfileSelect.TFrame")
+            
+            frameStyle = ttk.Style()
+            frameStyle.configure("ProfileSelect.TFrame", 
+                background = "#212220"
+            )
         
+            buttonStyle = ttk.Style()
+            buttonStyle.configure("ProfileSelect.TButton", 
+                foreground = "#eeddee",
+                background = "#212220",
+                font = ("System", 13)
+            )
+
+            self.columnconfigure(0, weight = 1)
+            for x in range(MAXPROFILES_):
+                self.rowconfigure(x, weight = 1)
+
+            self.profbuttons = []
+            for x in range(MAXPROFILES_):
+                button = ttk.Button(self, 
+                    style = "ProfileSelect.TButton",
+                    command = partial(callback, x + 1)
+                )
+                button.grid(row = x, sticky = "nsew")
+                self.profbuttons.append(button)
+
+    class ProfileView(ttk.Frame):
+        def __init__(self, master, callback):
+            super().__init__(master, style = "ProfileView.TFrame")
+            
+            frameStyle = ttk.Style()
+            frameStyle.configure("ProfileView.TFrame",
+                background = "#24b01c"
+            )
+            
+            buttonStyle = ttk.Style()
+            buttonStyle.configure("ProfileView.TButton",
+                foreground = "#eeddee",
+                background = "#313630",
+                font = ("System", 13)
+            )
+
+            self.rowconfigure(0, weight = 2)
+            for x in range(5): self.columnconfigure(x, weight = 1)
+            for x in range(5): self.rowconfigure(x + 1, weight = 4)
+
+            self.keybuttons = []
+            for x in range(25):
+                key = ttk.Button(self, 
+                    style = "ProfileView.TButton",
+                    command = partial(callback, x)
+                )
+                key.grid(row = int(x / 5) + 1, column = x % 5, padx = 20, pady = 20, sticky = "nsew")
+                self.keybuttons.append(key)
+
+    def __init__(self):
+        self.pnum = 0
+        self.profile = None
+        self.lock = False       # Not a perfect mutex; disable buttons in general use cases
+        # self.profiles = [None for x in range(MAXPROFILES_)]
+    
         self.rootWindow = tk.Tk()
         self.rootWindow.title("Linapse Configurator")
+        self.rootWindow.geometry("1200x768")
 
-    # -- Window methods --
-    def _buildKey(self):
-        pass
+        # Layout
+        self.rootWindow.columnconfigure(0, weight = 4)
+        self.rootWindow.columnconfigure(1, weight = 6)
+        self.rootWindow.rowconfigure(0, weight = 1)
 
-    # TODO: Construct a special shape for the thumb pseudo joystick
-    def _buildThumbKey(self):
-        pass
+        # style = ttk.Style(self.rootWindow)
+        # style.configure(".",
+        #     background = "#24b01c",
+        #     font = ("System", 13)
+        # )
         
+    # -- Window methods --
+    # Build the left pane: profile selection box
+    # Might be obsolete since the data is (currently) unchanging
+    def _buildProfileSelect(self):
+        for x, button in enumerate(self.profileSelect.profbuttons):
+            active = (self.pnum == x + 1)
+            button["text"] = f"{'>' if active else ' '}  Profile {x + 1}  {'<' if active else ' '}"
+            button.grid(row = x, sticky = "nsew")
+
+    # Build the right pane: profile customization
+    # We definitely need this as a function as the buttons will change for every different profile
     def _buildProfileView(self):
-        self.debug = tk.Label(self.rootWindow, text = "Debug message :)")
+        for x, button in enumerate(self.profileView.keybuttons):
+            bind = self.profile.keymap[Profile._keys[x]]
+            btype = Bind.typeString(bind._type)
+            code = bind.printDataStr()
+            button["text"] = f"> {'0' if x < 9 else ''}{x + 1}        \n{btype}\n{code}"
 
-    # Program args will essentially be used here
+    # Reprocesses the UI data so everything is up to date
+    def _updateProfile(self, pnum):
+        if self.lock: return
+        pnum, profile = change_profile(pnum)
+        
+        self.pnum = pnum
+        self.profile = profile
+        # TODO: Error handling if pnum is 0
+        # self.profiles[pnum - 1] = profile
+        
+        self._buildProfileSelect()      # Update profile which is shown as selected (left pane)
+        self._buildProfileView()        # Update what the profile buttons say (right pane)
+
+    # Handle the popup window for changing a key within the active profile
+    def _modifyKey(self, key):
+        if self.lock: return
+        self.lock = True
+        
+        keyidx = Profile._keys[key]
+        oldbind = self.profile.keymap[keyidx]
+        newbind = Bind(oldbind._type, oldbind._data)
+
+        bindWindow = tk.Toplevel(self.rootWindow)
+        bindWindow.title(f"Edit Key {'0' if key < 9 else ''}{key + 1}")
+        bindWindow.geometry("300x200")
+        # bindWindow.style("KeyView.TFrame")
+
+        bindWindow.columnconfigure(0, weight = 1)
+        bindWindow.columnconfigure(1, weight = 1)
+        bindWindow.rowconfigure(0, weight = 1)
+        bindWindow.rowconfigure(1, weight = 1)
+        
+        typeLabel = tk.Label(bindWindow, text = "Key Type: ", font = ("System", 11))
+        typeLabel.grid(row = 0, column = 0)
+
+        typeListOpts = tk.Variable(value = (Bind.typeString(0), Bind.typeString(1), Bind.typeString(2), Bind.typeString(3)))
+        typeList = tk.Listbox(bindWindow, listvariable = typeListOpts, selectmode = tk.SINGLE, height = 4, font=("System", 11))
+        typeList.grid(row = 0, column = 1, sticky = "ew")
+
+        dataFrame = ttk.Frame(bindWindow)   # Debugging: style = "ProfileView.TFrame"
+        dataFrame.columnconfigure(0, weight = 1)
+        dataFrame.columnconfigure(1, weight = 1)
+        dataFrame.grid(row = 1, column = 0, columnspan = 2, sticky = "nsew")
+
+        # Inital processing of the UI
+        # NOTE: This seems to work fine, though I fear we are not replacing this stringvar but instead 
+        #       creating a new one for each key change, which may classify as a memory leak in practice.
+        #       However, there exists no destroy member for a stringvar.
+        typeList.selection_set(oldbind._type)
+        dataValue = tk.StringVar()
+        dataValue.set(oldbind._data)
+
+        self._updateBindWindow(oldbind, newbind, typeList, dataFrame, dataValue, None)
+        
+        # Activate the event hooks
+        typeList.bind("<<ListboxSelect>>", partial(self._updateBindWindow, oldbind, newbind, typeList, dataFrame, dataValue))
+        bindWindow.bind("<Return>", lambda e: bindWindow.destroy())
+        bindWindow.bind("<Escape>", partial(self._cancelKeyChange, bindWindow, oldbind, newbind))
+        self.rootWindow.wait_window(bindWindow)
+
+        # Window closed, attempt to change the keybind
+        done = False
+        newbind._data = dataValue.get()
+
+        if newbind is None: done = True
+        elif not newbind.parseDataStr():
+            print(f"Could not parse '{dataValue.get()}' as a keybind. No changes have been made.")
+            done = True
+        elif oldbind == newbind: done = True
+
+        if not done:
+            # It is possible to press a key on the device and change the profile before writing changes
+            # We mitigate this by changing to the expected profile though this does not guarantee success
+            print(f"Editing key: {'0' if key < 9 else ''}{key + 1} 》{str(newbind)}")
+            change_profile(self.pnum)
+            modify_profile(Profile._keys[key], newbind)
+
+        # Unlock the parent UI
+        self.lock = False
+        self._updateProfile(self.pnum)
+
+    # Process bind window UI
+    def _updateBindWindow(self, oldbind, newbind, listbox, frame, data, event):
+        try: btype = listbox.curselection()[0]
+        except IndexError: return
+
+        # If this was called for an event we need to clean up the old entries
+        if event is not None:
+            # No need to change anything if the same entry was selected again
+            if btype == newbind._type: return
+            for child in frame.winfo_children():
+                child.destroy()
+
+        newbind._type = btype
+        label = ttk.Label(frame, font = ("System", 11))
+        display = None
+
+        match btype:
+            case 1:
+                label["text"] = "Key (str/hex):"
+
+                if btype == oldbind._type: data.set(Profile._codes[oldbind._data])
+                # elif event is None: data.set(Profile._codes[int(data.get())])    # This should never happen anymore
+                else: data.set("")
+                
+                display = ttk.Entry(frame, textvariable = data, font = ("System", 11))
+            case 2:
+                label["text"] = "Profile:"
+
+                if btype == oldbind._type: data.set(str(oldbind._data))
+                elif event is not None: data.set("1")
+                
+                display = ttk.Spinbox(frame, textvariable = data, from_ = 1,to = MAXPROFILES_, font = ("System", 11))
+            case 3:
+                label["text"] = "Profile:"
+                
+                if btype == oldbind._type: data.set(str(oldbind._data))
+                elif event is not None: data.set("1")
+                
+                display = ttk.Spinbox(frame, textvariable = data, from_ = 1,to = MAXPROFILES_, font = ("System", 11))
+
+        if display is None: return
+        
+        label.grid(row = 0, column = 0)
+        display.grid(row = 0, column = 1, sticky = "ew")
+        display.focus()
+        display.icursor("end")
+
+    def _cancelKeyChange(self, window, oldbind, newbind, event):
+        newbind._type = oldbind._type
+        newbind._data = oldbind._data
+        window.destroy()
+
+    # -- Show the editor --
     def run(self):
-        self._buildProfileView()
+        self.profileSelect = Editor.ProfileSelect(self.rootWindow, self._updateProfile)
+        self.profileSelect.grid(row = 0, column = 0, sticky = "nsew")
+    
+        self.profileView = Editor.ProfileView(self.rootWindow, self._modifyKey)
+        self.profileView.grid(row = 0, column = 1, sticky = "nsew")
 
-        # self.rootWindow.pack()
+        self._updateProfile(self.pnum)
         self.rootWindow.mainloop()
 
-# TODO: needs detection for which interface is which (handle this in the parse args step)
 # Read a device file into a buffer
-def read_device_file(devfile: str, ipath = "0003:1532:022B.0001"):
-    path = "/sys/bus/hid/drivers/hid-tartarus/" + ipath + "/" + devfile
+def read_device_file(devfile: str, ipath = None):
+    if ipath is None: ipath = KBDPATH_
+    path = DRIVERPATH_ + ipath + "/" + devfile
     buf = bytearray(4096)   # One page table in x86
     size = 0
 
@@ -180,8 +440,9 @@ def read_device_file(devfile: str, ipath = "0003:1532:022B.0001"):
 
     return buf, size
 
-def write_device_file(buf, devfile: str, ipath = "0003:1532:022B.0001"):
-    path = "/sys/bus/hid/drivers/hid-tartarus/" + ipath + "/" + devfile
+def write_device_file(buf, devfile: str, ipath = None):
+    if ipath is None: ipath = KBDPATH_
+    path = DRIVERPATH_ + ipath + "/" + devfile
     size = 0
 
     try:
@@ -202,7 +463,7 @@ def write_device_file(buf, devfile: str, ipath = "0003:1532:022B.0001"):
 def change_profile(pnum: int = 0, show = False):
     if pnum == 0:
         buf, _ = read_device_file("profile_num")
-        pnum = buf.decode("utf-8").split("\n", 1)[0]
+        pnum = int(buf.decode("utf-8").split("\n", 1)[0])
     else:
         buf = str(pnum).encode("utf-8")
         write_device_file(buf, "profile_num")   # returns number of bytes written
@@ -212,14 +473,14 @@ def change_profile(pnum: int = 0, show = False):
     profile.load(buf, size)
 
     if show:
-        print("> Active profile: " + pnum)
+        print("> Active profile: " + str(pnum))
         print(profile)
 
-    return profile
+    return pnum, profile
 
 # Modify a keybind of the active profile
 def modify_profile(key: int, bind: Bind):
-    profile = change_profile(0)
+    _, profile = change_profile(0)
     profile.keymap[key] = bind
 
     buf, _ = profile.store()
@@ -230,7 +491,6 @@ def modify_profile(key: int, bind: Bind):
 # Save a profile to disk
 # Will use the active profile if none specified
 def save_profile(path: str, profile = None):
-    # TODO: Get the current profile number so we swap back to it when we're done (nevermind do this in the editor save function)
     if profile is None: buf, _ = read_device_file("profile")
     else: buf, _ = profile.store()
 
@@ -294,8 +554,8 @@ if __name__ == "__main__":
 
                 try:
                     key = arglist.pop(0)
-                    btype = int(arglist.pop(0), 0)
-                    bdata = int(arglist.pop(0), 0)
+                    btype = arglist.pop(0)
+                    bdata = arglist.pop(0)
 
                 except IndexError: HELP = True
                 except ValueError: HELP = True
@@ -324,8 +584,39 @@ if __name__ == "__main__":
             # print("  > Help: -h, -?, --help, --usage")
             exit()
 
+    # Determine keyboard interface device path
+    DRIVERPATH_ = "/sys/bus/hid/drivers/hid-tartarus/"
+    KBDPATH_ = None
+    for name in os.listdir(DRIVERPATH_):
+        path = DRIVERPATH_ + name
+        if not os.path.islink(path): continue
+
+        buf = bytearray(8)
+        try:
+            with io.open(path + "/intf_type", "rb") as sysfile:
+                sysfile.readinto(buf)
+        except FileNotFoundError: continue
+
+        itype = buf.decode("utf-8").split("\n", 1)[0]
+        if itype != "KBD": continue
+        
+        KBDPATH_ = name
+        break;
+
+    if KBDPATH_ is None:
+        print("Could not find device files in /sys. Is the device plugged in?")
+        exit(1)
+
+    # Read max profile count
+    buf, _ = read_device_file("profile_count")
+    MAXPROFILES_ = int(buf.decode("utf-8").split("\n", 1)[0])
+
     # Run
     if PROFILE_NUM > 0:
+        if PROFILE_NUM > MAXPROFILES_:
+            # TODO: The user might want to cancel their operation if this happens
+            print(f"Warning: Requested profile number exceeds {MAXPROFILES_}")
+            
         print("Changing to profile:", PROFILE_NUM)
         change_profile(PROFILE_NUM)
 
@@ -336,11 +627,13 @@ if __name__ == "__main__":
     if SHOW: change_profile(0, True)
 
     if DATA:
-        # TODO: Parse the bind type and value from Profile._codes
         key = Profile._keys[int(DATA[0]) - 1]
         bind = Bind(DATA[1], DATA[2])
-        print(f"Editing key: {key} 》{str(bind)}")
-        modify_profile(key, bind)
+        if bind.parseDataStr():
+            print(f"Editing key: {'0' if key < 10 else ''}{key} 》{str(bind)}")
+            modify_profile(key, bind)
+            
+        else: print(f"Could not parse '{DATA[2]}' as a keybind. No changes have been made.")
 
     if SAVE:
         print(f"Saving profile '{SAVE}'")
