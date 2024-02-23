@@ -4,18 +4,18 @@
 ## Tasks
 - ~~Basic module structure~~
 - ~~Parsing raw events~~
- - ~~Fix dropped keys in event processing (many simultaneous key actions)~~
-- Device profiles
- - ~~Sysfs entries for user-space interfacing~~
- - ~~Profile indicator lights (needs URB refactor)~~
- - Python program to create and edit profiles
- - *System service to load profiles automatically (possibly with executable swapping)
 - ~~Hypershift mode~~
+- ~~Device (kbd) profiles~~
 - ~~Profile swapping~~
-- Macros (key support)
-- Handle "mouse" events
- - Swap device profiles with mouse wheel (needs implementation specifics--should mouse profiles be independent?)
-- Setup DKMS
+- ~~Profile indicator lights (needs URB refactor)~~
+- ~~Macros (key support)~~
+- ~~Sysfs entries for userspace api~~
+- ~~Userspace configuration tool~~
+- System service to load profiles automatically (possibly with executable-based profile swapping)
+- Advanced mouse functionality (such as a profile hotswap mode)
+- DKMS support
+
+**A note:** I'm still unsure how I want to set up the mouse profiles--whether they should be independent of the keyboard profiles or not. This may sound like a strange conundrum, but keeping the profiles seperate allows potential for cool features such as using the wheel to "roll" through device profiles. Since this functionality is something I've never used, for the meantime, the wheel simply maps to default mousewheel events. If you have ideas, please send them to me!  
 
 ## About
 About a year ago, I decided to officially throw in the towel on Windows. I knew there would be a couple jarring changes when moving to a world with a general lack of proprietary support, but the Linux experience has absolutely made it worth it. Alas, one of these challenges is a gaming perhipheral I swear by: The Razer Tartarus. This is a little half-keyboard device is a programmable macro pad with fantastic ergonomics, and I have found it an essential element in my gaming environment. Of course, using it on Linux is not so simple. All of the device functionality is handled in user space by an application with exclusive Windows support, and the device itself has no onboard keymap storage.  
@@ -31,7 +31,7 @@ Included in this repo is a half-ass Python program to provide a GUI for editing 
 NOTE: Being a WIP, there are still some funny quirks you may notice:  
 - The device defaults to a "debug profile" where buttons 01 - 05 will swap the respective profile  
 - The default maps at profiles 2 and 3 are the maps that I regularly use for gaming, which may prove unusual to many  
-- The scroll wheel does not work at all--It's one of the last features I expect to add  
+- The scroll wheel is not yet configurable, it simply binds to its default functionality  
 
 ## Requirements
 - linux >=3.0 (?) + standard build tools (linux-headers, gcc, make, git, etc.)
