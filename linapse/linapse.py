@@ -14,7 +14,7 @@ global MAXPROFILES_
 
 class Bind:
     # Static methods to get the text of a bind
-    def typeString(_type, shorten = False):
+    def printTypeString(_type, shorten = False):
         match _type:
             case 0: return "NONE" if shorten else "DISABLE"
             case 1: return "KEY"
@@ -28,17 +28,19 @@ class Bind:
 
     # We don't automatically perform this in initalization since self._data can be reassigned by the UI
     def parseDataStr(self):
-        if not type(self._data) == str: return True
+        # No conversion if our data is already processed
+        if isinstance(self._data, int): return True
+        
+        comp = self._data
+        self._data = 0
 
         # Unset data if no keybind
-        if self._type == 0:
-            self._data = 0
-            return True
+        if comp is None or len(comp) == 0: return True
+        comp = comp.upper()
 
         # Check the list of string keycodes (only applies to key bind type)
-        elif self._type == 1:
+        if self._type == 1:
             idx = -1
-            comp = self._data.upper()
             for i, string in enumerate(Profile._codes):
                 if string != comp: continue
                 idx = i
@@ -48,21 +50,51 @@ class Bind:
                 self._data = idx
                 return True
 
+        # Check the list of macro keycodes (only applies to macro bind type)
+        elif self._type == 4:
+            idx = -1
+            for i, string in enumerate(Profile._mcodes):
+                if string != comp: continue
+                idx = i
+                break
+
+            if idx >= 0:
+                self._data = idx
+                return True
+
         # Try to convert to hex/decimal
-        try: 
-            self._data = int(self._data, 0)
-            return True
-            
+        try: comp = int(comp, 0)
         except Exception: return False
+        
+        # Range checks
+        if comp < 1: return False
+        if self._type == 1 and comp >= len(Profile._codes): return False
+        elif self._type == 4 and comp >= len(Profile._mcodes): return False
+
+        self._data = comp
+        return True
 
     # Turns the data value into a more useful format (opposite of parse)
     def printDataStr(self):
         if not self.parseDataStr(): return ""
         match (self._type):
             case 0: return ""
-            case 1: return Profile._codes[self._data]
+            case 1:
+                ret = None
+                try: ret = Profile._codes[self._data]
+                except IndexError: return "UNSUPPORTED"
+                
+                if ret is None: return "UNSUPPORTED"
+                return ret
             case 2: return str(self._data)
             case 3: return str(self._data)
+            case 4: 
+                ret = None
+                try: ret = Profile._mcodes[self._data]
+                except IndexError: return "UNSUPPORTED"
+                
+                if ret is None: return "UNSUPPORTED"
+                return ret
             case _: return str(self._data)  # TODO
     
     def __init__(self, _type, _data):
@@ -70,7 +102,7 @@ class Bind:
         self._data = _data  #ord(_data)
 
     def __str__(self):
-        ret = Bind.typeString(self._type)
+        ret = Bind.printTypeString(self._type)
         ret += " : "
         ret += f"'{self._data}'" if type(self._data) is str else hex(self._data)
 
@@ -93,7 +125,7 @@ class Profile:
     # https://elixir.bootlin.com/linux/v6.7/source/include/uapi/linux/input-event-codes.h#L65
     # Currently maps keycodes 0 - 127
     _codes = [
-        "",     "ESC",  "1",    "2",    "3",    "4",    "5",    "6",    "7",    "8",        #   0 -   9
+        None,   "ESC",  "1",    "2",    "3",    "4",    "5",    "6",    "7",    "8",        #   0 -   9
         "9",    "0",    "-",    "=",    "BCKSP","TAB",  "Q",    "W",    "E",    "R",        #  10 -  19
         "T",    "Y",    "U",    "I",    "O",    "P",    "[",    "]",    "ENTER","LCTRL",    #  20 -  29
         "A",    "S",    "D",    "F",    "G",    "H",    "J",    "K",    "L",    ";",        #  30 -  39
@@ -105,7 +137,14 @@ class Profile:
         "KAT",  "HIR",  "HEN",  "KAHI", "MUHEN","JP,",  "KPENT","RCTRL","KP/",  "SYSRQ",    #  90 -  99
         "RALT", "LF",   "HOME", "UP",   "PGUP", "LEFT", "RIGHT","END",  "DOWN", "PGDN",     # 100 - 109
         "INS",  "DEL",  "MACRO","MUTE", "VOLDN","VOLUP","POWER","KP=",  "KP+/-","PAUSE",    # 110 - 119
-        "SCALE","KP,",  "HANGE","HANJA","YEN",  "LMETA","RMETA","COMP"
+        "SCALE","KP,",  "HANGE","HANJA","YEN",  "LMETA","RMETA","MENU"
+    ]
+
+    _mcodes = [
+        None,   "M1",   "M2",   "M3",   "M4",   "M5",   "M6",   "M7",   "M8",   "M9",       # 65(5) - 664
+        "M10",  "M11",  "M12",  "M13",  "M14",  "M15",  "M16",  "M17",  "M18",  "M19",      # 665 - 674
+        "M20",  "M21",  "M22",  "M23",  "M24",  "M25",  "M26",  "M27",  "M28",  "M29",      # 675 - 684
+        "M30",  None,   None,   "START","STOP", "CYCLE","PRE1", "PRE2", "PRE3"              # 685 - 693
     ]
 
     # Populate the profile's data with keybinds parsed from the sysfs buffer
@@ -159,7 +198,7 @@ class Profile:
             for j in range(5):
                 key = Profile._keys[key_idx + j]
                 btype = self.keymap[key]._type
-                ret += f"┃ {Bind.typeString(btype, True)}\t┃\t"
+                ret += f"┃ {Bind.printTypeString(btype, True)}\t┃\t"
 
             # Row 3 -> bind data
             ret += "\n"
@@ -168,7 +207,11 @@ class Profile:
                 btype = self.keymap[key]._type
                 bdata = self.keymap[key]._data
 
-                if (btype == 1): ret += f"┃ {Profile._codes[bdata]}\t┃\t"
+                code = "<OOB>"
+                try: code = Profile._codes[bdata]
+                except IndexError: pass
+                
+                if (btype == 1): ret += f"┃ {code}\t┃\t"
                 else: ret += f"┃ {hex(bdata)}\t┃\t"
 
             # Row 4 -> pretty formatting
@@ -276,7 +319,7 @@ class Editor:
     def _buildProfileView(self):
         for x, button in enumerate(self.profileView.keybuttons):
             bind = self.profile.keymap[Profile._keys[x]]
-            btype = Bind.typeString(bind._type)
+            btype = Bind.printTypeString(bind._type)
             code = bind.printDataStr()
             button["text"] = f"> {'0' if x < 9 else ''}{x + 1}        \n{btype}\n{code}"
 
@@ -315,8 +358,14 @@ class Editor:
         typeLabel = tk.Label(bindWindow, text = "Key Type: ", font = ("System", 11))
         typeLabel.grid(row = 0, column = 0)
 
-        typeListOpts = tk.Variable(value = (Bind.typeString(0), Bind.typeString(1), Bind.typeString(2), Bind.typeString(3)))
-        typeList = tk.Listbox(bindWindow, listvariable = typeListOpts, selectmode = tk.SINGLE, height = 4, font=("System", 11))
+        typeListOpts = tk.Variable(value = (
+            Bind.printTypeString(0),
+            Bind.printTypeString(1),
+            Bind.printTypeString(2),
+            Bind.printTypeString(3),
+            Bind.printTypeString(4)
+        ))
+        typeList = tk.Listbox(bindWindow, listvariable = typeListOpts, selectmode = tk.SINGLE, height = 5, font=("System", 11))
         typeList.grid(row = 0, column = 1, sticky = "ew")
 
         dataFrame = ttk.Frame(bindWindow)   # Debugging: style = "ProfileView.TFrame"
@@ -344,18 +393,27 @@ class Editor:
         done = False
         newbind._data = dataValue.get()
 
-        if newbind is None: done = True
-        elif not newbind.parseDataStr():
+        if not newbind.parseDataStr():
             print(f"Could not parse '{dataValue.get()}' as a keybind. No changes have been made.")
             done = True
         elif oldbind == newbind: done = True
+        elif newbind._type != 0 and newbind._data == 0:
+            print("No data for keybind. No changes have been made.")
+            done = True
 
         if not done:
+            # Ensure key is within the expected bounds
+            try: newkey = Profile._keys[key]
+            except IndexError: newkey = 0
+        
             # It is possible to press a key on the device and change the profile before writing changes
             # We mitigate this by changing to the expected profile though this does not guarantee success
-            print(f"Editing key: {'0' if key < 9 else ''}{key + 1} 》{str(newbind)}")
-            change_profile(self.pnum)
-            modify_profile(Profile._keys[key], newbind)
+            if newkey > 0:
+                print(f"Editing key: {'0' if key < 9 else ''}{key + 1} 》{str(newbind)}")
+                change_profile(self.pnum)
+                modify_profile(newkey, newbind)
+
+            else: print(f"Failed to edit key: Out of bounds")
 
         # Unlock the parent UI
         self.lock = False
@@ -378,28 +436,42 @@ class Editor:
         display = None
 
         match btype:
+            # KEY
             case 1:
                 label["text"] = "Key (str/hex):"
 
-                if btype == oldbind._type: data.set(Profile._codes[oldbind._data])
+                if btype == oldbind._type: data.set(oldbind.printDataStr())
                 # elif event is None: data.set(Profile._codes[int(data.get())])    # This should never happen anymore
                 else: data.set("")
                 
                 display = ttk.Entry(frame, textvariable = data, font = ("System", 11))
+
+            # HYPERSHIFT
             case 2:
                 label["text"] = "Profile:"
 
                 if btype == oldbind._type: data.set(str(oldbind._data))
                 elif event is not None: data.set("1")
                 
-                display = ttk.Spinbox(frame, textvariable = data, from_ = 1,to = MAXPROFILES_, font = ("System", 11))
+                display = ttk.Spinbox(frame, textvariable = data, from_ = 1, to = MAXPROFILES_, font = ("System", 11))
+
+            # PROFILE
             case 3:
                 label["text"] = "Profile:"
                 
                 if btype == oldbind._type: data.set(str(oldbind._data))
                 elif event is not None: data.set("1")
                 
-                display = ttk.Spinbox(frame, textvariable = data, from_ = 1,to = MAXPROFILES_, font = ("System", 11))
+                display = ttk.Spinbox(frame, textvariable = data, from_ = 1, to = MAXPROFILES_, font = ("System", 11))
+
+            # MACRO
+            case 4:
+                label["text"] = "Macro Key:"
+
+                if btype == oldbind._type: data.set(oldbind.printDataStr())
+                else: data.set("")
+                
+                display = ttk.Entry(frame, textvariable = data, font = ("System", 11))
 
         if display is None: return
         
