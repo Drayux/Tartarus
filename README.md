@@ -24,7 +24,7 @@ I've never written a device driver before, so when the need arose, I was optimis
 
 The goal of this driver is to recreate some of the primary functionality that Razer Synapse provides to Windows users. Notably, device features such as customizable keymaps, profile hotswapping, and hypershift mode are of note. With just a couple KB of memory, we can construct a table of keybinds to map a device input to an interchangable output. Swapping the profile is (on paper) as generally as simple as changing the index to the table, and swapping out active keys.  
 
-Macros are the primary feature that I've omitted. Ultimately, I don't use them personally so the motivation was limited, and functions with an indefinite run duration felt..._ambitious_ for kernel space. As such, I propose that the device should send the KEY_MACRO_X event to the kernel, where the parsed macro can be handled by its own process in user space with a program such as [Wootomation](https://github.com/WootingKb/wooting-macros). **(TODO)**  
+Macros are a primary feature of Razer Synapse not reflected in this driver. Ultimately, I felt that functions with an indefinite run duration felt..._ambitious_ for kernel space. As such, I've configured the driver such that the device supports the KEY_MACRO_X events to the kernel, where the parsed macro can be handled by its own process in user space. I recommend using a program such as [Wootomation](https://github.com/WootingKb/wooting-macros) for handling your macros. These macro keys are available within `CTRL_MACRO` bind type and not a `CTRL_KEY` type. Even though they are both essentially key events, I felt that the nature of their intended usage was better suited for being classified seperately.  
 
 Included in this repo is a half-ass Python program to provide a GUI for editing profiles. That said, this is a very barebones script to save me the headache of spending time programming in python. Hopefully it may serve useful as a starting point or basic configuration tool.  
 
@@ -35,9 +35,20 @@ NOTE: Being a WIP, there are still some funny quirks you may notice:
 
 ## Requirements
 - linux >=3.0 (?) + standard build tools (linux-headers, gcc, make, git, etc.)
-- _DKMS_ : **TODO** Module installation (There likely exists alternatives; feel free to make a PR!)
-- python >= 3.11 : Allows profile customization GUI
-- _\<service system\>_ : **TODO** I plan to eventually provide openrc/dinit service files for the user-space profile tool
+- _DKMS_ : Module installation (This is technically optional, and there likely exists alternatives; feel free to make a PR!)
+- _python_ >= 3.11 : Allows profile customization GUI (also optional but python isn't hard to come by)
+- _\<service system\>_ : **TODO** I hope to eventually provide openrc/dinit service files for the user-space profile tool
+
+## Using DKMS
+DKMS is a nifty system for building kernel modules out of tree, and keeping them automatically up to date with kernel updates as though they are in-tree.  
+
+To build this as a DKMS module, clone this repo somewhere convenient (I'll use `~/tartarus`). Then move the directory to `/usr/src/tartarus-0.1` (as root.) Finally build the module!  
+
+```bash
+git clone git@github.com:Drayux/Tartarus.git ~/tartarus
+sudo mv ~/tartarus /usr/src/tartarus-0.1
+sudo dkms install -m tartarus -v 0.1
+```
 
 ## SysFS
 The keyboard interface (inum 0) will generate three sysfs entries: `profile_count`, `profile_num`, and `profile`  
