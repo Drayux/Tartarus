@@ -43,10 +43,17 @@ class Bind:
         # Check the list of string keycodes (only applies to key bind type)
         if self._type == 1:
             idx = -1
-            for i, string in enumerate(Profile._codes):
-                if string != comp: continue
-                idx = i
-                break
+            # for i, string in enumerate(Profile._codes):
+            #     if string != comp: continue
+            #     idx = i
+            #     break
+
+            if len(comp) > 1:
+                splits = comp.split(' ')
+                comp = "".join(splits)
+            
+            try: idx = Profile._names[comp]
+            except KeyError: pass
 
             if idx >= 0:
                 self._data = idx
@@ -124,22 +131,21 @@ class Profile:
         0x44, 0x50, 0x52, 0x4F, 0x51
     ]
 
-    # https://elixir.bootlin.com/linux/v6.7/source/include/uapi/linux/input-event-codes.h#L65
     # Currently maps keycodes 0 - 127
     _codes = [
         None,   "ESC",  "1",    "2",    "3",    "4",    "5",    "6",    "7",    "8",        #   0 -   9
-        "9",    "0",    "-",    "=",    "BCKSP","TAB",  "Q",    "W",    "E",    "R",        #  10 -  19
-        "T",    "Y",    "U",    "I",    "O",    "P",    "[",    "]",    "ENTER","LCTRL",    #  20 -  29
+        "9",    "0",    "-",    "=",    "BKSP", "TAB",  "Q",    "W",    "E",    "R",        #  10 -  19
+        "T",    "Y",    "U",    "I",    "O",    "P",    "[",    "]",    "ENTER","CTRL",     #  20 -  29
         "A",    "S",    "D",    "F",    "G",    "H",    "J",    "K",    "L",    ";",        #  30 -  39
-        "\'",   "~",    "LSHFT","\\",   "Z",    "X",    "C",    "V",    "B",    "N",        #  40 -  49
-        "M",    ",",    ".",    "/",    "RSHFT","KP*",  "LALT", "SPACE","CAPS", "F1",       #  50 -  59
-        "F2",   "F3",   "F4",   "F5",   "F6",   "F7",   "F8",   "F9",   "F10",  "NUMLK",    #  60 -  69
-        "SCRLK","KP7",  "KP8/U","KP9",  "KP-",  "KP4/L","KP5",   "KP6/R","KP+",  "KP1",     #  70 -  79
+        "\'",   "`",    "SHIFT","\\",   "Z",    "X",    "C",    "V",    "B",    "N",        #  40 -  49
+        "M",    ",",    ".",    "/",    "RSHFT","KP*",  "ALT",  "SPACE","CAPS", "F1",       #  50 -  59
+        "F2",   "F3",   "F4",   "F5",   "F6",   "F7",   "F8",   "F9",   "F10",  "NUM",      #  60 -  69
+        "SCR",  "KP7",  "KP8/U","KP9",  "KP-",  "KP4/L","KP5",   "KP6/R","KP+",  "KP1",     #  70 -  79
         "KP2/D","KP3",  "KP0",  "KP.",  "",     "ZEN",  "ANY",  "F11",  "F12",  "RO",       #  80 -  89
-        "KAT",  "HIR",  "HEN",  "KAHI", "MUHEN","JP,",  "KPENT","RCTRL","KP/",  "SYSRQ",    #  90 -  99
+        "KAT",  "HIR",  "HEN",  "KA/HI","MUHEN","JP,",  "KPENT","RCTRL","KP/",  "SYSRQ",    #  90 -  99
         "RALT", "LF",   "HOME", "UP",   "PGUP", "LEFT", "RIGHT","END",  "DOWN", "PGDN",     # 100 - 109
         "INS",  "DEL",  "MACRO","MUTE", "VOLDN","VOLUP","POWER","KP=",  "KP+/-","PAUSE",    # 110 - 119
-        "SCALE","KP,",  "HANGE","HANJA","YEN",  "LMETA","RMETA","MENU"
+        "SCALE","KP,",  "HANGE","HANJA","YEN",  "META", "RMETA","MENU"
     ]
 
     _mcodes = [
@@ -148,6 +154,136 @@ class Profile:
         "M20",  "M21",  "M22",  "M23",  "M24",  "M25",  "M26",  "M27",  "M28",  "M29",      # 675 - 684
         "M30",  None,   None,   "START","STOP", "CYCLE","PRE1", "PRE2", "PRE3"              # 685 - 693
     ]
+
+    # List of keynames to make setting binds a little bit nicer
+    # https://elixir.bootlin.com/linux/v6.7/source/include/uapi/linux/input-event-codes.h#L65
+    _names = {
+        "ESC": 0x01, "ESCAPE": 0x01,
+        "1": 0x02, "ONE": 0x02,
+        "2": 0x03, "TWO": 0x03,
+        "3": 0x04, "THREE": 0x04,
+        "4": 0x05, "FOUR": 0x05,
+        "5": 0x06, "FIVE": 0x06,
+        "6": 0x07, "SIX": 0x07,
+        "7": 0x08, "SEVEN": 0x08,
+        "8": 0x09, "EIGHT": 0x09,
+        "9": 0x0A, "NINE": 0x0A,
+        "0": 0x0B, "ZER0": 0x0B,
+        "-": 0x0C, "HYPHEN": 0x0C, "DASH": 0x0C,
+        "=": 0x0D, "EQUAL": 0x0D, "EQUALS": 0x0D, "EQUALSIGN": 0x0D,
+        "BKSP": 0x0E, "BACK": 0x0E, "BACKSPACE": 0x0E,
+        "TAB": 0x0F,
+        "Q": 0x10,
+        "W": 0x11,
+        "E": 0x12,
+        "R": 0x13,
+        "T": 0x14,
+        "Y": 0x15,
+        "U": 0x16,
+        "I": 0x17,
+        "O": 0x18,
+        "P": 0x19,
+        "[": 0x1A, "LBRACKET": 0x1A, "LEFTBRACKET": 0x1A, "LBRACE": 0x1A, "LEFTBRACE": 0x1A,
+        "]": 0x1A, "RBRACKET": 0x1A, "RIGHTBRACKET": 0x1B, "RBRACE": 0x1B, "RIGHTBRACE": 0x1B,
+        "ENTER": 0x1C, "RETURN": 0x1C,
+        "CTRL": 0x1D, "LCTRL": 0x1D, "LEFTCTRL": 0x1D, "CONTROL": 0x1D, "LCONTROL": 0x1D, "LEFTCONTROL": 0x1D,
+        "A": 0x1E,
+        "S": 0x1F,
+        "D": 0x20,
+        "F": 0x21,
+        "G": 0x22,
+        "H": 0x23,
+        "J": 0x24,
+        "K": 0x25,
+        "L": 0x26,
+        ";": 0x27, "COLON": 0x27, "SEMICOLON": 0x27,
+        "\'": 0x28, "APOSTROPHE": 0x28, "APOST": 0x28, "QUOTE": 0x28, "QUOTATION": 0x28,
+        "`": 0x29, "~": 0x29, "TICK": 0x29, "BACKTICK": 0x29, "TILDE": 0x29, "GRAVE": 0x29, "WIGGLE": 0x29,
+        "SHIFT": 0x2A, "SHFT": 0x2A, "LSHFT": 0x2A, "LSHIFT": 0x2A, "LEFTSHIFT": 0x2A,
+        "\\": 0x2B, "BACKSLASH": 0x2B, "PIPE": 0x2B,
+        "Z": 0x2C,
+        "X": 0x2D,
+        "C": 0x2E,
+        "V": 0x2F,
+        "B": 0x30,
+        "N": 0x31,
+        "M": 0x32,
+        ",": 0x33, "COMMA": 0x33,
+        ".": 0x34, "PERIOD": 0x34, "DOT": 0x34,
+        "/": 0x35, "SLASH": 0x35, "FORWARDSLASH": 0x35,
+        "RSHFT": 0x36, "RSHIFT": 0x36, "RIGHTSHIFT": 0x36,
+        "KP*": 0x37, "MULT": 0x37, "MULTIPLY": 0x37, "KPMULT": 0x37, "KPMULTIPLY": 0x37, "KEYPADMULT": 0x37, "KEYPADMULTIPLY": 0x37, "*": 0x37,
+        "ALT": 0x38, "LALT": 0x38, "LEFTALT": 0x38, "OPT": 0x38, "OPTION": 0x38, "LOPT": 0x38, "LOPTION": 0x38, "LEFTOPT": 0x38, "LEFTOPTION": 0x38,
+        " ": 0x39, "SPACE": 0x39,
+        "CAPS": 0x3A, "CAPSLOCK": 0x3A,
+        "F1": 0x3B,
+        "F2": 0x3C,
+        "F3": 0x3D,
+        "F4": 0x3E,
+        "F5": 0x3F,
+        "F6": 0x40,
+        "F7": 0x41,
+        "F8": 0x42,
+        "F9": 0x43,
+        "F10": 0x44,
+        "NUM": 0x45, "NUMLOCK": 0x45,
+        "SCR": 0x46, "SCRLOCK": 0x46, "SCROLLLOCK": 0x46,
+        "KP7": 0x47, "KEYPAD7": 0x47,
+        "KP8": 0x48, "KP8/U": 0x48, "KPUP": 0x48, "KEYPAD8": 0x48, "KEYPADUP": 0x48,
+        "KP9": 0x49, "KEYPAD9": 0x49,
+        "KP-": 0x4A, "MINUS": 0x4A, "KPMINUS": 0x4A, "KEYPADMINUS": 0x4A,
+        "KP4": 0x4B, "KP4/L": 0x4B, "KPLEFT": 0x4B, "KEYPAD4": 0x4B, "KEYPADLEFT": 0x4B,
+        "KP5": 0x4C, "KEYPAD5": 0x4C,
+        "KP6": 0x4D, "KP6/R": 0x4D, "KPRIGHT": 0x4D, "KEYPAD6": 0x4D, "KEYPADRIGHT": 0x4D,
+        "KP+": 0x4E, "PLUS": 0x4E, "KPPLUS": 0x4E, "KEYPADPLUS": 0x4E, "+": 0x4E,
+        "KP1": 0x4F, "KEYPAD1": 0x4F,
+        "KP2": 0x50, "KP2/D": 0x50, "KPDOWN": 0x50, "KEYPAD2": 0x50, "KEYPADDOWN": 0x50,
+        "KP3": 0x51, "KEYPAD3": 0x51,
+        "KP0": 0x52, "KEYPAD0": 0x52,
+        "KP.": 0x53, "POINT": 0x53, "KPDOT": 0x53, "KEYPADDOT": 0x53,
+        "ZEN": 0x55, "ZENKAKUHANKAKU": 0x55,
+        "ANY": 0x56, "ANYKEY": 0x56, "102": 0x56,
+        "F11": 0x57,
+        "F12": 0x58,
+        "R0": 0x59,
+        "KAT": 0x5A, "KATAKANA": 0x5A,
+        "HIR": 0x5B, "HIRAGANA": 0x5B,
+        "HEN": 0x5C, "HENKAN": 0x5C,
+        "KA/HI": 0x5D, "KATAKANAHIRAGANA": 0x5D,
+        "MUHEN": 0x5E, "MUHENKAN": 0x5E,
+        "JP,": 0x5F, "JPCOMMA": 0x5F, "KPJPCOMMA": 0x5F, "KEYPADJPCOMMA": 0x5F,
+        "KPENT": 0x60, "KPENTER": 0x60, "KPRETURN": 0x60, "KEYPADENTER": 0x60, "KEYPADRETURN": 0x60, "SUBMIT": 0x60,
+        "RCTRL": 0x61, "RIGHTCTRL": 0x61, "RCONTROL": 0x61, "RIGHTCONTROL": 0x61,
+        "KP/": 0x62, "DIV": 0x62, "DIVIDE": 0x62, "KPDIV": 0x62, "KPDIVIDE": 0x62, "KEYPADDIV": 0x62, "KEYPADDIVIDE": 0x6, "KPSLASH": 0x62, "KEYPADSLASH": 0x62,
+        "SYSRQ": 0x63,
+        "RALT": 0x64, "RIGHTALT": 0x64, "ROPT": 0x64, "ROPTION": 0x64, "RIGHTOPT": 0x64, "RIGHTOPTION": 0x64,
+        "LF": 0x65, "LINEFEED": 0x65,
+        "HOME": 0x66,
+        "UP": 0x67, "ARROWUP": 0x67, "UPARROW": 0x67,
+        "PGUP": 0x68, "PAGEUP": 0x68,
+        "LEFT": 0x69, "ARROWLEFT": 0x69, "LEFTARROW": 0x69,
+        "RIGHT": 0x6A, "ARROWRIGHT": 0x6A, "RIGHTARROW": 0x6A,
+        "END": 0x6B,
+        "DOWN": 0x6C, "ARROWDOWN": 0x6C, "DOWNARROW": 0x6C,
+        "PGDN": 0x6D, "PGDOWN": 0x6D, "PAGEDOWN": 0x6D,
+        "INS": 0x6E, "INSERT": 0x6E,
+        "DEL": 0x6F, "DELETE": 0x6F,
+        "MACRO": 0x70,
+        "MUTE": 0x71, "VOLMUTE": 0x71, "VOLUMEMUTE": 0x71,
+        "VOLDN": 0x72, "VOLDOWN": 0x72, "VOLUMEDOWN": 0x72,
+        "VOLUP": 0x73, "VOLUP": 0x73, "VOLUMEUP": 0x73,
+        "POWER": 0x74,
+        "KP=": 0x75, "KPEQUAL": 0x75, "KPEQUALS": 0x75, "KEYPADEQUAL": 0x75, "KEYPADEQUALS": 0x75, "KEYPADEQUALSIGN": 0x75,
+        "KP+/-": 0x76, "PLUSMINUS": 0x76, "KPPLUSMINUS": 0x76, "KEYPADPLUSMINUS": 0x76, "+/-": 0x76,
+        "PAUSE": 0x77, "BREAK": 0x77, "PAUSEBREAK": 0x77, "PSE": 0x77, "PSEBRK": 0x77,
+        "KP,": 0x79, "KPCOMMA": 0x79, "KEYPADCOMMA": 0x79,
+        "HANGE": 0x7A, "HANGEUL": 0x7A, "HANGUEL": 0x7A,
+        "HANJA": 0x7B,
+        "YEN": 0x7C,
+        "META": 0x7D, "SUPER": 0x7D, "LMETA": 0x7D, "LSUPER": 0x7D,
+        "RMETA": 0x7E, "RSUPER": 0x7E,
+        "MENU": 0x7F, "COMPOSE": 0x7F,
+    }
 
     # Populate the profile's data with keybinds parsed from the sysfs buffer
     def load(self, buf, size = 0):

@@ -79,8 +79,8 @@ Outputs a string allowing a user-space program to determine which interface is w
 _NOTE: There is probably a better way to do this that I do not yet know about; feel free to PR!_
 
 ## Profiles
-**NOTE:** The python configuration tool "linapse" must be ran as sudo to actually change the profile in the driver. Truthfully, I do not know what the protocol I should use here is. Though this may prove problematic for users on multi-user machines.  
-**NOTE:** Included in `linapse/` is the file `default.rz` which is the default "out of box" profile provided to the device by Razer
+**NOTE:** The python configuration tool "linapse" must be ran as sudo to actually change the profile in the driver. Truthfully, I do not know what the protocol I should use here is, as this caveat may prove problematic for users on multi-user machines.  
+**NOTE:** Included in `linapse/` is the file `default.rz` which is the default "out of box" profile provided to the device by Razer  
 **TODO:** Needs an explanation of the bind types, values, and many pretty pictures  
 Also describe the nuances of profiles/hypershift keys (when they swap versus override)  
 Once I add functionality to the mouse wheel, describe that too  
