@@ -7,6 +7,7 @@ from functools import partial
 # I found this the most useful tkinter resource: https://www.pythontutorial.net/tkinter/
 import tkinter as tk
 from tkinter import ttk as ttk
+from tkinter import filedialog as tkfiledialog
 
 global DRIVERPATH_
 global KBDPATH_
@@ -256,7 +257,7 @@ class Editor:
                 self.profbuttons.append(button)
 
     class ProfileView(ttk.Frame):
-        def __init__(self, master, callback):
+        def __init__(self, master, load_callback, save_callback, key_callback):
             super().__init__(master, style = "ProfileView.TFrame")
             
             frameStyle = ttk.Style()
@@ -275,11 +276,27 @@ class Editor:
             for x in range(5): self.columnconfigure(x, weight = 1)
             for x in range(5): self.rowconfigure(x + 1, weight = 4)
 
+            # Operations buttons (save, load, TODO: settings)
+            self.load = ttk.Button(self,
+                text = "Load",
+                style = "ProfileView.TButton",
+                command = partial(load_callback)
+            )
+            self.load.grid(row = 0, column = 1, padx = 5, sticky = "ew")
+            
+            self.save = ttk.Button(self,
+                text = "Save",
+                style = "ProfileView.TButton",
+                command = partial(save_callback)
+            )
+            self.save.grid(row = 0, column = 3, padx = 5, sticky = "ew")
+
+            # Profile keys
             self.keybuttons = []
             for x in range(25):
                 key = ttk.Button(self, 
                     style = "ProfileView.TButton",
-                    command = partial(callback, x)
+                    command = partial(key_callback, x)
                 )
                 key.grid(row = int(x / 5) + 1, column = x % 5, padx = 20, pady = 20, sticky = "nsew")
                 self.keybuttons.append(key)
@@ -325,13 +342,13 @@ class Editor:
 
     # Reprocesses the UI data so everything is up to date
     def _updateProfile(self, pnum):
-        if self.lock: return
         pnum, profile = change_profile(pnum)
+
+        # change_profile will return pnum = 0 when the write fails
+        if pnum < 0: return
         
         self.pnum = pnum
         self.profile = profile
-        # TODO: Error handling if pnum is 0
-        # self.profiles[pnum - 1] = profile
         
         self._buildProfileSelect()      # Update profile which is shown as selected (left pane)
         self._buildProfileView()        # Update what the profile buttons say (right pane)
@@ -394,7 +411,7 @@ class Editor:
         newbind._data = dataValue.get()
 
         if not newbind.parseDataStr():
-            print(f"Could not parse '{dataValue.get()}' as a keybind. No changes have been made.")
+            print(f"Could not parse '{dataValue.get()}' as a {Bind.printTypeString(newbind._type)} bind. No changes have been made.")
             done = True
         elif oldbind == newbind: done = True
         elif newbind._type != 0 and newbind._data == 0:
@@ -412,12 +429,12 @@ class Editor:
                 print(f"Editing key: {'0' if key < 9 else ''}{key + 1} 》{str(newbind)}")
                 change_profile(self.pnum)
                 modify_profile(newkey, newbind)
+                self._updateProfile(self.pnum)      # Profile has changed but the UI won't until we call this
 
             else: print(f"Failed to edit key: Out of bounds")
 
         # Unlock the parent UI
         self.lock = False
-        self._updateProfile(self.pnum)
 
     # Process bind window UI
     def _updateBindWindow(self, oldbind, newbind, listbox, frame, data, event):
@@ -485,12 +502,52 @@ class Editor:
         newbind._data = oldbind._data
         window.destroy()
 
+    def _saveActiveProfile(self):
+        if self.lock: return
+
+        # Lock the UI before opening the file dialogue
+        self.lock = True
+
+        # TODO: Default filename profile_{num}.rz
+        filepath = tkfiledialog.asksaveasfilename(
+            title = "Save profile...",
+            initialfile = f"profile_{self.pnum}.rz",
+            filetypes = [("Razer Profile", "*.rz")]
+        )
+
+        if len(filepath) > 0:
+            print(f"Saving profile to '{filepath}'...")
+            if save_profile(filepath): print("Done!")
+            
+        self.lock = False
+
+    def _loadActiveProfile(self):
+        if self.lock: return
+        
+        # Lock the UI before opening the file dialogue
+        self.lock = True
+
+        filepath = tkfiledialog.askopenfilename(
+            title = "Load a profile...",
+            filetypes = [("Razer Profile", "*.rz")]
+        )
+
+        if len(filepath) > 0:
+            print(f"Loading profile '{filepath}'...")
+            if load_profile(filepath):
+                self._updateProfile(self.pnum)
+                print("Done!")
+        
+        self.lock = False
+
     # -- Show the editor --
     def run(self):
+        # Left Pane: profile selection
         self.profileSelect = Editor.ProfileSelect(self.rootWindow, self._updateProfile)
         self.profileSelect.grid(row = 0, column = 0, sticky = "nsew")
-    
-        self.profileView = Editor.ProfileView(self.rootWindow, self._modifyKey)
+
+        # Right Pane: profile viewing/editing
+        self.profileView = Editor.ProfileView(self.rootWindow, self._loadActiveProfile, self._saveActiveProfile, self._modifyKey)
         self.profileView.grid(row = 0, column = 1, sticky = "nsew")
 
         self._updateProfile(self.pnum)
@@ -534,11 +591,13 @@ def write_device_file(buf, devfile: str, ipath = None):
 # Just return the active profile if !pnum
 def change_profile(pnum: int = 0, show = False):
     if pnum == 0:
-        buf, _ = read_device_file("profile_num")
-        pnum = int(buf.decode("utf-8").split("\n", 1)[0])
+        buf, size = read_device_file("profile_num")
+        if size > 0: pnum = int(buf.decode("utf-8").split("\n", 1)[0])
+        else: pnum = -1
     else:
         buf = str(pnum).encode("utf-8")
-        write_device_file(buf, "profile_num")   # returns number of bytes written
+        size = write_device_file(buf, "profile_num")   # returns number of bytes written
+        if size == 0: pnum = -1
         
     profile = Profile()
     buf, size = read_device_file("profile")
@@ -571,7 +630,10 @@ def save_profile(path: str, profile = None):
             outfile.write(buf)
 
     except FileNotFoundError:
-        print(f"Could not save profile. Does the directory exist?")
+        print(f"Could not save profile. Is the path valid?")
+        return False
+
+    return True
 
 # Load profile data from disk to the active profile
 def load_profile(path: str):
@@ -584,8 +646,11 @@ def load_profile(path: str):
 
     except FileNotFoundError:
         print(f"Failed to load profile")
+        return False
 
-    write_device_file(buf, "profile")
+    size = write_device_file(buf, "profile")
+    if size > 0: return True
+    return False
 
 if __name__ == "__main__":
     # Parse args (not technically consts, sorry if you're malding rn)
