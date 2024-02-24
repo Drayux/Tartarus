@@ -3,6 +3,7 @@ import os
 import sys
 
 from functools import partial
+from pwd import getpwnam as getuser
 
 # I found this the most useful tkinter resource: https://www.pythontutorial.net/tkinter/
 import tkinter as tk
@@ -625,13 +626,19 @@ def save_profile(path: str, profile = None):
     if profile is None: buf, _ = read_device_file("profile")
     else: buf, _ = profile.store()
 
-    try:
+    try:    
         with io.open(path, "wb") as outfile:
             outfile.write(buf)
 
     except FileNotFoundError:
         print(f"Could not save profile. Is the path valid?")
         return False
+
+    if os.getuid() == 0 and os.getgid() == 0:
+        user = os.environ["SUDO_USER"]
+        nam = getuser(user)
+        uid, gid = nam.pw_uid, nam.pw_gid
+        os.chown(path, uid, gid)
 
     return True
 
@@ -775,7 +782,7 @@ if __name__ == "__main__":
     if SAVE:
         print(f"Saving profile '{SAVE}'")
         save_profile(SAVE)
-
+        
     # --------
     if EDITOR:
         editor = Editor()
