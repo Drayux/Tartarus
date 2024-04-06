@@ -1,6 +1,6 @@
 obj-m := tartarus.o
 
-KERNELDIR := /lib/modules/$(shell uname -r)/build
+KERNELDIR ?= /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)
 
 # TODO make a debug version perhaps?
