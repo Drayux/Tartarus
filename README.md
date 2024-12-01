@@ -45,7 +45,7 @@ DKMS is a nifty system for building kernel modules out of tree, and keeping them
 To build this as a DKMS module, clone this repo somewhere convenient (I'll use `~/tartarus`). Then move the directory to `/usr/src/tartarus-0.1` (as root.) Finally build the module!  
 
 ```bash
-git clone git@github.com:Drayux/Tartarus.git ~/tartarus
+git clone https://github.com/Drayux/Tartarus.git ~/tartarus
 sudo mv ~/tartarus /usr/src/tartarus-0.1
 sudo dkms install -m tartarus -v 0.1
 ```
